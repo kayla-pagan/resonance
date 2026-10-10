@@ -41,6 +41,41 @@ export interface Hold {
   y: number;
   end: number;
 }
+
+/** v8 notation: one instrument-shaped mark (kick ellipse, snare spokes, keys triangles, …). */
+export interface NoteMark {
+  k: string;
+  x: number;
+  y: number;
+  t0: number;
+  v: number;
+  life: number;
+  /** snare spoke angle */
+  a?: number;
+  /** hat grain angles and radii */
+  pts?: [number, number][];
+  /** lead direction */
+  dx?: number;
+}
+
+/** v8 notation: a held note's ribbon, growing at loop speed for the note's duration. */
+export interface Ribbon {
+  inst: string;
+  x0: number;
+  y: number;
+  t0: number;
+  end: number;
+  sp: number;
+  v: number;
+  ph: number;
+}
+
+/** v8 notation: particles gather briefly toward a melodic note's pitch height. */
+export interface Gather {
+  y: number;
+  t0: number;
+  k: number;
+}
 /** [left, top, right, bottom, soft] in canvas coordinates. */
 export type AvoidRect = [number, number, number, number, number];
 
@@ -140,6 +175,18 @@ export interface Sim {
   holds: Hold[];
   lastFire: Record<Channel, number>;
   hand: Hand;
+  // v8 visual notation (empty / inactive when notation is off)
+  marks: NoteMark[];
+  ribbons: Ribbon[];
+  /** Live held-note trail: [x, y, t] points. */
+  trail: [number, number, number][];
+  /** When the live trail started fading out (0 = not fading). */
+  trailOff: number;
+  trailInst?: string;
+  gathers: Gather[];
+  /** Downbeat "breath": start time and strength. */
+  breathT: number;
+  breathK: number;
   // optional/late-bound fields the prototype adds on the fly
   handSeen?: number;
   bothT?: number;
@@ -212,6 +259,13 @@ export function createSim(screen: Screen, reduced: boolean): Sim {
     loopReadyUntil: -1,
     beatT: -9,
     holds: [],
+    marks: [],
+    ribbons: [],
+    trail: [],
+    trailOff: 0,
+    gathers: [],
+    breathT: -9,
+    breathK: 0,
     lastFire: { rhythm: -9, expression: -9 },
     hand: {
       x: 0,

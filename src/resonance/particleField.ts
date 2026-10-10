@@ -13,6 +13,8 @@ export class ParticleField {
   sim: Sim;
   ctx: CanvasRenderingContext2D | null = null;
   fills: string[] = [];
+  /** Optional layer drawn after ripples and before the hand glow (v8 visual notation). */
+  overlay: ((ctx: CanvasRenderingContext2D, t: number) => void) | null = null;
 
   constructor(sim: Sim) {
     this.sim = sim;
@@ -220,6 +222,17 @@ export class ParticleField {
     const HR = 160;
     const HR2 = HR * HR;
 
+    // v8 notation: the downbeat "breath" (sand eases outward, then settles) and short-lived
+    // gathers toward melodic pitch heights. Both are inactive when notation is off.
+    const bA = t - s.breathT;
+    const bF = 1 - bA / 0.8;
+    const brK = bA >= 0 && bA < 0.8 ? s.breathK * bF * bF * 0.001 * rmF : 0;
+    const bcx = W * 0.5;
+    const bcy = H * 0.55;
+    s.gathers = s.gathers.filter((g) => t - g.t0 < 0.6);
+    const gs = s.gathers.map((g) => [g.y, g.k * (1 - (t - g.t0) / 0.6) * 0.0018 * rmF]);
+    const ng = gs.length;
+
     // Simulate each grain, then bucket it by (hue, brightness, size) for batched drawing.
     for (let i = 0; i < n; i++) {
       let x = px[i];
@@ -261,6 +274,17 @@ export class ParticleField {
           off[i] * (1 + I * 2.2) -
           y) *
         duneK;
+      // v8 notation: downbeat breath and the gather toward held pitches (zero when notation is off).
+      if (brK) {
+        ix += (x - bcx) * brK;
+        iy += (y - bcy) * brK * 0.7;
+      }
+      for (let q = 0; q < ng; q++) {
+        const dy = gs[q][0] - y;
+        if (dy < 70 && dy > -70) {
+          iy += dy * gs[q][1] * (1 - Math.abs(dy) / 70);
+        }
+      }
       for (let r = 0; r < nr; r++) {
         const rp = rips[r];
         const dx = x - rp.x;
@@ -390,6 +414,9 @@ export class ParticleField {
       ctx.arc(rp.x, rp.y, rp.r, 0, 6.2832);
       ctx.stroke();
     }
+
+    // v8 notation layer (instrument marks, held-note ribbons, live trail), when enabled.
+    this.overlay?.(ctx, t);
 
     // Hand glow and ring.
     if (ha > 0.02) {

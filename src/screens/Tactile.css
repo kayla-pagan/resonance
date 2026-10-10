@@ -394,3 +394,97 @@
   color: rgba(236, 230, 216, 0.55);
   min-height: 14px;
 }
+
+/* Score view tabs (v8): Music | Tactile */
+.ts-tabs {
+  display: flex;
+  gap: 12px;
+  height: 16px;
+  align-items: center;
+}
+.ts-tab {
+  padding: 0;
+  border: none;
+  background: none;
+  font-family: inherit;
+  font-size: 10.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  line-height: 16px;
+  text-underline-offset: 4px;
+  cursor: pointer;
+}
+.ts-tab--music {
+  text-decoration-color: rgba(236, 230, 216, 0.5);
+}
+.ts-tab--tactile {
+  text-decoration-color: rgba(127, 224, 236, 0.6);
+}
+
+/* Music view (v8): one row per instrument */
+.mus-rows {
+  display: grid;
+  grid-template-rows: repeat(4, 19px);
+  height: 76px;
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+.mus-row-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: opacity 0.3s;
+}
+.mus-row-shape {
+  flex: none;
+}
+.mus-field {
+  position: relative;
+  height: 76px;
+}
+.mus-rule {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: rgba(236, 230, 216, 0.07);
+}
+.mus-beat {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: rgba(236, 230, 216, 0.05);
+}
+.mus-bar {
+  position: absolute;
+  top: -24px;
+  bottom: 0;
+  width: 1px;
+  background: rgba(236, 230, 216, 0.14);
+}
+.mus-mark {
+  position: absolute;
+  box-sizing: border-box;
+  transition:
+    background 0.15s,
+    box-shadow 0.2s;
+}
+/* Firing highlight, set by the controller at each event's audio time. */
+.mus-mark[data-on] {
+  box-shadow: 0 0 10px var(--col);
+}
+.mus-mark:not(.mus-ring)[data-on] {
+  background: var(--ink) !important;
+}
+.mus-hit {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--amber);
+}
+.mus-hit[data-on] {
+  background: var(--ink);
+}
