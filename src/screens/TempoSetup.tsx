@@ -16,7 +16,7 @@ export function TempoSetup({ st, ctrl, ui }: ScreenProps) {
       ? st.pulse.msg
         ? 'That pulse was uneven. Keep the hits evenly spaced and try again.'
         : camHit
-          ? 'Pinch or flick in a steady rhythm, 4–8 times.'
+          ? 'Pinch in a steady rhythm, 4–8 times.'
           : 'Click the field in a steady rhythm, 4–8 times, or press J.'
       : tr === 'found' && st.viaPulse
         ? 'Pulse found. Start when you are ready.'

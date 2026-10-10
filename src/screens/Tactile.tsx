@@ -7,10 +7,11 @@ import './Tactile.css';
 
 type Ctrl = RefObject<ResonanceController | null>;
 
+/** Feel modes. Internally `rhythm` is the left (Drums) motor, `expression` the right (Bass). */
 const FEELS: [Feel, string][] = [
-  ['full', 'Full'],
-  ['rhythm', 'Pulse'],
-  ['expression', 'Expression'],
+  ['full', 'Both'],
+  ['rhythm', 'Drums'],
+  ['expression', 'Bass'],
   ['off', 'Off'],
 ];
 
@@ -38,7 +39,7 @@ export function TactileModule({
   const hasLoop = st.layers.length > 0;
   const role = busy
     ? ' · Keeping time'
-    : (tr === 'playing' || tr === 'paused') && hasLoop
+    : (tr === 'playing' || tr === 'paused' || tr === 'armed') && hasLoop
       ? ' · Composition'
       : '';
   const lanes = laneOps(st);
@@ -53,14 +54,19 @@ export function TactileModule({
       <div className="tact-band">
         <canvas
           ref={wrist}
-          aria-label="Simulated wristband: Pulse motor on the left, Expression motor on the right"
+          aria-label={
+            busy
+              ? 'Simulated wristband: both motors pulse the beat together'
+              : 'Simulated wristband: Drums motor on the left, Bass motor on the right'
+          }
           className="tact-canvas"
         />
+        {/* While keeping time both motors carry the same beat; otherwise left = Drums, right = Bass. */}
         <span className="tact-lane tact-lane--pulse" style={{ opacity: lanes.pulse }}>
-          Pulse
+          {busy ? 'Beat' : 'Drums'}
         </span>
         <span className="tact-lane tact-lane--expr" style={{ opacity: lanes.expr }}>
-          Expression
+          {busy ? 'Beat' : 'Bass'}
         </span>
       </div>
       <div role="radiogroup" aria-label="Tactile mode" className="tact-feels">
@@ -197,14 +203,6 @@ export function TactileScore({
                   }
                 />
               ))}
-              {mus.hits.map((h) => (
-                <span
-                  key={h.id}
-                  data-ev={h.id}
-                  className="mus-hit"
-                  style={{ left: h.left, opacity: h.op }}
-                />
-              ))}
               <span ref={playhead} className="ts-playhead" />
             </div>
           </>
@@ -212,9 +210,9 @@ export function TactileScore({
         {!music && (
           <>
             <div className="ts-lanes">
-              <span style={{ opacity: lanes.pulse }}>Pulse</span>
+              <span style={{ opacity: lanes.pulse }}>{g.keepingTime ? 'Beat' : 'Drums'}</span>
               <span className="ts-lane-expr" style={{ opacity: lanes.expr }}>
-                Expression
+                {g.keepingTime ? 'Beat' : 'Bass'}
               </span>
             </div>
             <div ref={score} className="ts-field">
@@ -239,34 +237,35 @@ export function TactileScore({
                   }}
                 />
               ))}
-              {g.expr.map((x) => (
+              {g.exprBeats.map((p) => (
                 <span
-                  key={x.id}
-                  data-ev={x.id}
-                  className={'ts-expr' + (x.glow ? ' ts-expr--glow' : '')}
+                  key={p.id + '-r'}
+                  data-ev={p.id}
+                  className="ts-pulse ts-pulse--expr"
                   style={{
-                    top: x.top,
-                    left: x.left,
-                    width: x.w,
-                    height: x.h,
-                    marginLeft: x.ml,
-                    marginTop: x.mt,
-                    borderRadius: x.r,
-                    clipPath: x.clip,
-                    opacity: x.op,
+                    left: p.left,
+                    width: p.size,
+                    height: p.size,
+                    marginLeft: p.margin,
+                    marginTop: p.margin,
+                    background: p.bg,
+                    opacity: p.op,
                   }}
                 />
               ))}
-              {g.hits.map((h) => (
+              {g.bass.map((x) => (
                 <span
-                  key={h.id}
-                  data-ev={h.id}
-                  className="ts-hit"
-                  style={{ left: h.left, opacity: h.op }}
-                >
-                  <span className="ts-hit-dot ts-hit-dot--top" />
-                  <span className="ts-hit-dot ts-hit-dot--bottom" />
-                </span>
+                  key={x.id}
+                  data-ev={x.id}
+                  className="ts-expr ts-expr--glow"
+                  style={{
+                    left: x.left,
+                    width: x.w,
+                    height: x.h,
+                    marginTop: x.mt,
+                    opacity: x.op,
+                  }}
+                />
               ))}
               <span ref={playhead} className="ts-playhead" />
             </div>
@@ -295,6 +294,14 @@ export function TactileScore({
               </span>
             );
           })}
+          {/* Two-motor prototype: only Drums and Bass have a motor. */}
+          {!music && (
+            <span className="ts-note">
+              {g.keepingTime
+                ? 'Both motors pulse the beat while you record'
+                : 'Keys and Lead are heard and seen, not felt'}
+            </span>
+          )}
         </div>
       </div>
     </div>
@@ -354,10 +361,11 @@ type Dot = { bs: string; bc: string; bg: string; text: string };
 
 const BAND_NOTE: Record<AppState['bandHw'], string> = {
   'not-connected':
-    'Optional. The on-screen wristband shows both motors without hardware. Connect to feel Pulse and Expression on your wrist.',
+    'Optional. The on-screen wristband shows both motors without hardware. Connect to feel drums and bass on your wrist.',
   searching: 'Choose Resonance Wristband in the browser dialog.',
   connecting: 'Connecting to Resonance Wristband.',
-  connected: 'Pulse and Expression are playing on your wrist. Feel modes filter what is sent.',
+  connected:
+    'Drums and bass are playing on your wrist; both motors keep time while you record. Feel modes filter what is sent.',
   lost: 'The connection dropped. Both motors stopped.',
   unavailable:
     'Bluetooth wristband unavailable in this browser. The on-screen wristband, tactile score and everything else keep working.',
@@ -464,13 +472,13 @@ export function WristbandPopover({
           </div>
           <div className="band-fire">
             <button onClick={() => ctrl.current?.hwTestFire(['rhythm'])} className="band-fire-btn">
-              Pulse
+              Drums
             </button>
             <button
               onClick={() => ctrl.current?.hwTestFire(['expression'])}
               className="band-fire-btn band-fire-btn--expr"
             >
-              Expression
+              Bass
             </button>
             <button
               onClick={() => ctrl.current?.hwTestFire(['rhythm', 'expression'])}

@@ -193,32 +193,17 @@
     background 0.15s,
     box-shadow 0.2s;
 }
+/* Count-in / recording: the same metronome beat in the Bass lane (both motors keep time). */
+.ts-pulse--expr {
+  top: 75%;
+}
+/* Bass notes (the right motor). */
 .ts-expr {
   position: absolute;
+  top: 75%;
+  border-radius: 2px;
   background: var(--cyan);
   transition: background 0.15s;
-}
-.ts-hit {
-  --hit: var(--amber);
-  position: absolute;
-  top: 25%;
-  height: 50%;
-  width: 1px;
-  background: var(--hit);
-}
-.ts-hit-dot {
-  position: absolute;
-  left: -4px;
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: var(--hit);
-}
-.ts-hit-dot--top {
-  top: -4px;
-}
-.ts-hit-dot--bottom {
-  bottom: -4px;
 }
 /* Firing highlight, set by the controller at each event's audio time. */
 .ts-pulse[data-on] {
@@ -230,9 +215,6 @@
 }
 .ts-expr--glow[data-on] {
   box-shadow: 0 0 12px rgba(127, 224, 236, 0.9);
-}
-.ts-hit[data-on] {
-  --hit: var(--ink);
 }
 .ts-playhead {
   position: absolute;
@@ -257,6 +239,13 @@
   display: flex;
   align-items: center;
   gap: 7px;
+}
+.ts-note {
+  margin-left: auto;
+  text-transform: none;
+  letter-spacing: 0.02em;
+  font-size: 11px;
+  color: rgba(236, 230, 216, 0.42);
 }
 
 /* Playback modes */
@@ -477,14 +466,4 @@
 }
 .mus-mark:not(.mus-ring)[data-on] {
   background: var(--ink) !important;
-}
-.mus-hit {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 1px;
-  background: var(--amber);
-}
-.mus-hit[data-on] {
-  background: var(--ink);
 }

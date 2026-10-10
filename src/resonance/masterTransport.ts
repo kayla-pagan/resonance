@@ -44,6 +44,11 @@ export class MasterTransport {
   private startTime = 0;
   /** Dev diagnostics: ticks from an aborted run that were ignored. */
   staleTicks = 0;
+  /**
+   * The last absolute step already dispatched in this run (-1 before the first). The scheduler
+   * runs ahead of what is heard, so a step at or before this one can no longer be changed.
+   */
+  lastStep = -1;
   private buckets: MusicEvent[][] = emptyBuckets();
 
   constructor(handlers: TransportHandlers) {
@@ -76,6 +81,16 @@ export class MasterTransport {
     this.T.start(this.startTime);
     this.isRunning = true;
     this.run++;
+    this.lastStep = -1;
+  }
+
+  /**
+   * The first bar line whose events have not been dispatched yet: the earliest step on which a
+   * complete count-in (beat 1 included) can still begin.
+   */
+  nextOpenBar() {
+    const after = Math.max(this.lastStep, Math.floor(this.nowStep()));
+    return BAR_STEPS * (Math.floor(after / BAR_STEPS) + 1);
   }
 
   stop() {
@@ -145,6 +160,7 @@ export class MasterTransport {
       return;
     }
     const abs = Math.round(this.T.getTicksAtTime(time) / this.ticks16());
+    this.lastStep = abs;
     this.handlers.onStep(abs, time);
 
     // Read buckets after onStep: finishing a recording swaps in the new score for this very step.

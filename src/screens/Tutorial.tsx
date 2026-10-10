@@ -3,22 +3,25 @@ import type { ScreenProps } from './types';
 import './Tutorial.css';
 
 const TUT = [
-  'Raise your hand to change notes.',
+  'Height chooses the sound.',
   'Pinch to play.',
   'Move more to play stronger.',
-  'Flick down for an accent.',
+  'Feel the beat, then the music.',
 ];
+/** The tactile step reads the same for cursor and camera. */
+const TACTILE_HINT =
+  'While you count in and record, both motors pulse the beat together to keep you in time. On playback, one motor carries the Drums and the other the Bass.';
 const TUT_HINT = [
-  'Move the cursor up and down the field. Six heights give six notes of the scale, so every note fits.',
+  'Move the cursor up and down the field. Six heights give six notes of the scale, so every note fits. On drums, height picks kick, snare or hat.',
   'Click and hold anywhere in the field. A quick click plays a short note; holding sustains it.',
-  'Fast, wide movement makes the sound brighter, the sand wilder and the expression pulses stronger. Slow movement keeps it soft.',
-  'Flick the cursor sharply downward, or press A. It sends a big wave and fires Pulse and Expression together.',
+  'Fast, wide movement makes the sound brighter, the sand wilder and the touch stronger. Slow movement keeps it soft.',
+  TACTILE_HINT,
 ];
 const TUT_HINT_CAM = [
-  'Raise and lower your open hand in front of the camera. Six heights give six notes of the scale.',
+  'Raise and lower your open hand in front of the camera. Six heights give six notes of the scale. On drums, height picks kick, snare or hat.',
   'Touch your thumb to your index finger. A quick pinch plays a short note; holding it sustains the note.',
   'Move your hand faster and wider to play stronger. Hold up both hands and spread them apart to open up the sound.',
-  'Flick your hand down quickly. It sends a big wave and fires Pulse and Expression together.',
+  TACTILE_HINT,
 ];
 
 /**
@@ -35,7 +38,7 @@ export function Tutorial({ st, setState, ui }: ScreenProps) {
     <div className="tut-wrap">
       <div data-avoid="1" role="dialog" aria-label="Gesture tutorial" className="tut">
         <div className="tut-head">
-          <span className="tut-count mono">Gesture {step + 1} of 4</span>
+          <span className="tut-count mono">Step {step + 1} of 4</span>
           <div className="tut-segs">
             {[0, 1, 2, 3].map((i) => (
               <span
@@ -75,16 +78,10 @@ export function Tutorial({ st, setState, ui }: ScreenProps) {
               </div>
             )}
             {step === 3 && (
-              <>
-                <span
-                  className="tut-hap-ring"
-                  style={{
-                    opacity: Math.min(1, u.hap).toFixed(3),
-                    transform: 'scale(' + (1 + u.hap * 0.55).toFixed(3) + ')',
-                  }}
-                />
-                <span className="tut-hap-dot" />
-              </>
+              <div className="tut-motors" aria-hidden="true">
+                <span className="tut-motor" />
+                <span className="tut-motor tut-motor--r" />
+              </div>
             )}
           </div>
           <div className="tut-text">
@@ -93,6 +90,12 @@ export function Tutorial({ st, setState, ui }: ScreenProps) {
             {step === 0 && (
               <p className="tut-now mono">
                 Now · {u.name} · degree {u.deg}
+              </p>
+            )}
+            {step === 3 && (
+              <p className="tut-note">
+                This prototype uses two tactile channels. Future wristbands could use additional
+                motors to separate more musical layers.
               </p>
             )}
           </div>

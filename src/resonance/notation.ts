@@ -9,7 +9,6 @@ const MARK_LIFE: Record<string, number> = {
   bass: 1,
   keys: 0.8,
   lead: 0.6,
-  flick: 0.5,
 };
 
 const C = { cream: '236,230,216', bass: '169,155,255', keys: '127,224,236', lead: '242,189,114' };
@@ -177,12 +176,6 @@ export class Notation {
         ctx.lineTo(hx - sz, m.y);
         ctx.closePath();
         ctx.fill();
-      } else if (m.k === 'flick') {
-        // Flick: a vertical stroke falling through the field.
-        st(C.lead, 0.55 * e, 2);
-        ctx.moveTo(m.x, H * 0.18);
-        ctx.lineTo(m.x, H * 0.18 + ez * H * 0.64);
-        ctx.stroke();
       }
     }
 
