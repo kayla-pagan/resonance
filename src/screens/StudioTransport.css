@@ -1,0 +1,252 @@
+/* Desktop transport row (v7 Studio bottom block). Hidden on mobile, where the dock replaces it. */
+.tp {
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.is-mob .tp {
+  display: none;
+}
+.tp-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px 28px;
+  flex-wrap: wrap;
+}
+.tp-main {
+  order: 4;
+  flex: none;
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 20px 28px;
+  flex-wrap: wrap;
+}
+
+.tp-status {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 168px;
+}
+.tp-status-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.tp-status-icon {
+  box-sizing: border-box;
+}
+.tp-status-bar {
+  display: flex;
+  gap: 12px;
+  font-size: 11.5px;
+  color: rgba(236, 230, 216, 0.72);
+  white-space: nowrap;
+}
+.tp-timer {
+  color: rgba(236, 230, 216, 0.42);
+}
+
+.tp-beats {
+  display: flex;
+  align-items: flex-end;
+  gap: 14px;
+  height: 44px;
+  padding-bottom: 4px;
+  box-sizing: border-box;
+}
+.tp-beat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+  height: 30px;
+}
+.tp-beat-dot {
+  border-radius: 50%;
+  transition: background 0.08s;
+}
+.tp-beat-num {
+  font-size: 10.5px;
+  line-height: 1;
+}
+
+.tp-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+.tp-rec {
+  height: 44px;
+  min-width: 128px;
+  justify-content: center;
+  padding: 0 18px;
+  border-radius: 10px;
+  border: 1px solid var(--amber);
+  font-size: 13.5px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  transition:
+    background 0.3s,
+    color 0.3s;
+}
+.tp-rec-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+.tp-play {
+  height: 44px;
+  padding: 0 16px;
+  border-radius: 10px;
+  border: 1px solid rgba(236, 230, 216, 0.26);
+  background: transparent;
+  color: var(--ink);
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.tp-play-icon {
+  width: 9px;
+  height: 10px;
+  background: var(--ink);
+}
+.tp-click {
+  height: 44px;
+  padding: 0 12px;
+  border: none;
+  background: none;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.tp-click-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+}
+.tp-loop {
+  height: 44px;
+  padding: 0 10px;
+  border: none;
+  background: none;
+  color: var(--ink);
+  font-size: 13px;
+}
+.tp-reset {
+  height: 44px;
+  padding: 0 10px;
+  border: none;
+  background: none;
+  color: rgba(236, 230, 216, 0.66);
+  font-size: 13px;
+}
+
+/* Mobile performance dock */
+.tp-dock {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: calc(10px + env(safe-area-inset-bottom));
+  pointer-events: auto;
+  border: 1px solid rgba(236, 230, 216, 0.12);
+  border-radius: 20px;
+  background: rgba(8, 9, 11, 0.86);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  z-index: 2;
+}
+.tp-dock-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.tp-dock-status {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.tp-dock-label {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.tp-dock-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+  color: rgba(236, 230, 216, 0.62);
+  white-space: nowrap;
+}
+.tp-dock-beats {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.tp-dock-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.tp-dock-rec {
+  flex: 1.3;
+  height: 48px;
+  justify-content: center;
+  padding: 0 12px;
+  border-radius: 12px;
+  border: 1px solid var(--amber);
+  font-size: 14px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  transition:
+    background 0.3s,
+    color 0.3s;
+}
+.tp-dock-play {
+  flex: 1;
+  height: 48px;
+  justify-content: center;
+  padding: 0 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(236, 230, 216, 0.26);
+  background: transparent;
+  color: var(--ink);
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.tp-dock-reset {
+  height: 48px;
+  padding: 0 6px;
+  border: none;
+  background: none;
+  color: rgba(236, 230, 216, 0.6);
+  font-size: 13px;
+}

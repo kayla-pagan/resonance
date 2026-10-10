@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { initialState, PROTOTYPE_PROPS, UiStore, type AppState, type StatePatch } from './resonance/appState';
+import {
+  initialState,
+  PROTOTYPE_PROPS,
+  UiStore,
+  type AppState,
+  type StatePatch,
+} from './resonance/appState';
 import { ResonanceController } from './resonance/controller';
 import { Landing } from './screens/Landing';
 import { Tutorial } from './screens/Tutorial';
@@ -23,29 +29,52 @@ export default function App() {
 
   // Class-style merge, like the prototype's this.setState.
   const setState = useCallback((patch: StatePatch) => {
-    setSt(s => ({ ...s, ...(typeof patch === 'function' ? patch(s) : patch) }));
+    setSt((s) => ({ ...s, ...(typeof patch === 'function' ? patch(s) : patch) }));
   }, []);
 
-  useLayoutEffect(() => { stateRef.current = st; });
+  useLayoutEffect(() => {
+    stateRef.current = st;
+  });
 
   useEffect(() => {
-    const c = new ResonanceController({ getState: () => stateRef.current, setState, ui, props: PROTOTYPE_PROPS, rootRef, canvasRef, stageRef });
+    const c = new ResonanceController({
+      getState: () => stateRef.current,
+      setState,
+      ui,
+      props: PROTOTYPE_PROPS,
+      rootRef,
+      canvasRef,
+      stageRef,
+    });
     ctrl.current = c;
-    return () => { c.destroy(); ctrl.current = null; };
+    return () => {
+      c.destroy();
+      ctrl.current = null;
+    };
   }, [setState, ui]);
 
-  useEffect(() => { ctrl.current?.didUpdate(st); }, [st]);
+  useEffect(() => {
+    ctrl.current?.didUpdate(st);
+  }, [st]);
 
   // Pending (camera): "Enter the studio" also sets cam: 'pending' and requests the camera.
   // Until the MediaPipe milestone lands it enters with cursor control, like demo mode.
-  const enterStudio = () => setState({ mode: 'live', screen: 'tutorial', step: 0, showPreview: true });
+  const enterStudio = () =>
+    setState({ mode: 'live', screen: 'tutorial', step: 0, showPreview: true });
   const enterDemo = () => setState({ mode: 'demo', screen: 'tutorial', step: 0, cam: 'simulated' });
 
   const screenProps = { st, setState, ctrl, ui };
   return (
-    <div ref={rootRef} className="app" onPointerMove={e => ctrl.current?.onMove(e)}>
-      <canvas ref={canvasRef} onPointerDown={e => ctrl.current?.onDown(e)} aria-label="Particle field. Move to shape the current; press and hold to pinch." className="app-field" />
-      <div data-avoid="1" className="app-brand"><span>Resonance</span></div>
+    <div ref={rootRef} className="app" onPointerMove={(e) => ctrl.current?.onMove(e)}>
+      <canvas
+        ref={canvasRef}
+        onPointerDown={(e) => ctrl.current?.onDown(e)}
+        aria-label="Particle field. Move to shape the current; press and hold to pinch."
+        className="app-field"
+      />
+      <div data-avoid="1" className="app-brand">
+        <span>Resonance</span>
+      </div>
       {st.screen === 'welcome' && <Landing onEnterStudio={enterStudio} onEnterDemo={enterDemo} />}
       {st.screen === 'tutorial' && <Tutorial {...screenProps} />}
       {st.screen === 'tempo' && <TempoSetup {...screenProps} />}
