@@ -108,8 +108,8 @@ export function transportView(st: AppState, u: Ui) {
               : st.bpm + ' BPM · ' + layerCount;
   const status: StatusLook = { ...(looks[key] || looks.ready), bar };
 
-  // Record button: find pulse → record drums → add a layer. With every milestone instrument
-  // recorded there is nothing left to add yet, so the button rests disabled.
+  // Record button: find pulse → record drums → add a layer → complete (all four layers).
+  const complete = !busy && nL > 0 && !available.length;
   const primText =
     tr === 'ready'
       ? 'Find my pulse'
@@ -119,13 +119,15 @@ export function transportView(st: AppState, u: Ui) {
           ? 'Stop'
           : !nL
             ? 'Record drums'
-            : '+ Add layer';
-  const primDis =
-    !!st.focus || (!busy && tr !== 'ready' && tr !== 'finding' && nL > 0 && !available.length);
+            : complete
+              ? 'Complete'
+              : '+ Add layer';
+  const primDis = !!st.focus || (complete && tr !== 'ready' && tr !== 'finding');
 
   return {
     tr,
     nL,
+    complete,
     busy,
     running,
     canPlay,

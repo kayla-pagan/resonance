@@ -4,6 +4,8 @@ import type { AppState } from '../resonance/appState';
 import { availableInstruments } from '../resonance/appState';
 import { HitDots } from '../ui/Dots';
 import { StudioDock, StudioTransport } from './StudioTransport';
+import { MutedHero, TactileModule, WristbandPopover } from './Tactile';
+import type { TactileRefs } from '../resonance/controller';
 import type { ScreenProps } from './types';
 import './Studio.css';
 
@@ -58,14 +60,18 @@ function StatusDot({ d }: { d: Dot }) {
   );
 }
 
-/** Studio, milestone 1: status row, preview, popovers, guide, loop panel and note readout. */
+/**
+ * Studio: status row, preview, popovers, guide, loop panel, note readout, transport,
+ * tactile module and tactile score.
+ */
 export function Studio({
   st,
   setState,
   ctrl,
   ui,
   stageRef,
-}: ScreenProps & { stageRef: RefObject<HTMLDivElement | null> }) {
+  tactile,
+}: ScreenProps & { stageRef: RefObject<HTMLDivElement | null>; tactile: TactileRefs }) {
   const u = useSyncExternalStore(ui.subscribe, ui.get);
   const tr = st.transport;
   const busy = tr === 'countin' || tr === 'recording';
@@ -194,6 +200,8 @@ export function Studio({
   const closeOthers = { showKeys: false, showA11y: false, showChar: false, showBand: false };
   const toggleA11y = () => setState((x) => ({ ...closeOthers, showA11y: !x.showA11y }));
   const toggleKeys = () => setState((x) => ({ ...closeOthers, showKeys: !x.showKeys }));
+  const toggleBand = () => setState((x) => ({ ...closeOthers, showBand: !x.showBand }));
+  const heroOn = tr === 'playing' && nL > 0 && st.playMode === 'feel' && !st.focus && !st.pick;
   const toggleChar = () => setState((x) => ({ ...closeOthers, showChar: !x.showChar }));
   const togglePreview = () =>
     mob
@@ -230,8 +238,8 @@ export function Studio({
             <StatusDot d={camDot} />
             <span>{camDot.text}</span>
           </button>
-          {/* Pending (Bluetooth): wristband popover with connect + hardware test. */}
           <button
+            onClick={toggleBand}
             aria-expanded={st.showBand}
             title={BAND_TITLE[st.bandHw] || ''}
             aria-live="polite"
@@ -364,6 +372,10 @@ export function Studio({
           <span>Close</span>
         </div>
       )}
+
+      {st.showBand && <WristbandPopover st={st} setState={setState} ctrl={ctrl} dot={bandDot} />}
+
+      {heroOn && <MutedHero />}
 
       {guideOn && guide && (
         <div className="studio-guide">
@@ -501,6 +513,9 @@ export function Studio({
               </span>
             </div>
           )}
+          {nL === 4 && !busy && (
+            <span className="studio-loop-complete serif">Composition complete.</span>
+          )}
         </div>
       )}
 
@@ -603,9 +618,9 @@ export function Studio({
               </div>
             </div>
           </div>
-          {/* Pending (haptics): tactile module — wristband canvas, Feel modes. */}
+          <TactileModule st={st} ctrl={ctrl} tactile={tactile} />
         </div>
-        <StudioTransport st={st} setState={setState} ctrl={ctrl} u={u} />
+        <StudioTransport st={st} setState={setState} ctrl={ctrl} u={u} tactile={tactile} />
       </div>
 
       {/* Pending (mobile): tactile sheet, layers sheet. */}

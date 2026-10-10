@@ -1,7 +1,8 @@
 import type { RefObject } from 'react';
 import type { AppState, StatePatch, Ui } from '../resonance/appState';
-import type { ResonanceController } from '../resonance/controller';
+import type { ResonanceController, TactileRefs } from '../resonance/controller';
 import { beatDot } from '../ui/beats';
+import { PlaybackModes, TactileScore } from './Tactile';
 import { transportView, type StatusLook } from './transportView';
 import './StudioTransport.css';
 
@@ -10,6 +11,8 @@ interface TransportProps {
   setState: (patch: StatePatch) => void;
   ctrl: RefObject<ResonanceController | null>;
   u: Ui;
+  /** Present on desktop, where the tactile score sits under the transport. */
+  tactile?: TactileRefs;
 }
 
 const DIM = 'rgba(236,230,216,.62)';
@@ -31,7 +34,7 @@ function StatusIcon({ status, size }: { status: StatusLook; size: number }) {
 }
 
 /** Desktop transport row: status, beats 1–4, Record / Play / Click / Loop / Reset. */
-export function StudioTransport({ st, setState, ctrl, u }: TransportProps) {
+export function StudioTransport({ st, setState, ctrl, u, tactile }: TransportProps) {
   const v = transportView(st, u);
   const loopPopMode = st.vh < 760;
 
@@ -114,8 +117,9 @@ export function StudioTransport({ st, setState, ctrl, u }: TransportProps) {
             </button>
           </div>
         </div>
+        <PlaybackModes st={st} ctrl={ctrl} />
       </div>
-      {/* Pending (Milestone 3+): playback modes (Feel only / Hear only), tactile score. */}
+      {tactile && <TactileScore st={st} tactile={tactile} />}
     </div>
   );
 }

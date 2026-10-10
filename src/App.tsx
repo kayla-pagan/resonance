@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createRef, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   initialState,
   PROTOTYPE_PROPS,
@@ -6,7 +6,7 @@ import {
   type AppState,
   type StatePatch,
 } from './resonance/appState';
-import { ResonanceController } from './resonance/controller';
+import { ResonanceController, type TactileRefs } from './resonance/controller';
 import { Landing } from './screens/Landing';
 import { Tutorial } from './screens/Tutorial';
 import { TempoSetup } from './screens/TempoSetup';
@@ -26,6 +26,15 @@ export default function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const ctrl = useRef<ResonanceController | null>(null);
+  // DOM the controller updates every frame: wristband canvas, module edges, score playhead/marks.
+  const [tactile] = useState<TactileRefs>(() => ({
+    wrist: createRef<HTMLCanvasElement>(),
+    box: createRef<HTMLDivElement>(),
+    edgeL: createRef<HTMLSpanElement>(),
+    edgeR: createRef<HTMLSpanElement>(),
+    playhead: createRef<HTMLSpanElement>(),
+    score: createRef<HTMLDivElement>(),
+  }));
 
   // Class-style merge, like the prototype's this.setState.
   const setState = useCallback((patch: StatePatch) => {
@@ -45,13 +54,14 @@ export default function App() {
       rootRef,
       canvasRef,
       stageRef,
+      tactile,
     });
     ctrl.current = c;
     return () => {
       c.destroy();
       ctrl.current = null;
     };
-  }, [setState, ui]);
+  }, [setState, ui, tactile]);
 
   useEffect(() => {
     ctrl.current?.didUpdate(st);
@@ -78,7 +88,7 @@ export default function App() {
       {st.screen === 'welcome' && <Landing onEnterStudio={enterStudio} onEnterDemo={enterDemo} />}
       {st.screen === 'tutorial' && <Tutorial {...screenProps} />}
       {st.screen === 'tempo' && <TempoSetup {...screenProps} />}
-      {st.screen === 'studio' && <Studio {...screenProps} stageRef={stageRef} />}
+      {st.screen === 'studio' && <Studio {...screenProps} stageRef={stageRef} tactile={tactile} />}
     </div>
   );
 }

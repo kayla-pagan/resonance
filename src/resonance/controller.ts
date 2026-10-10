@@ -12,6 +12,7 @@ import {
 } from './appState';
 import { AudioEngine, type TriggerMeta } from './audioEngine';
 import { BAR_STEPS, LOOP_STEPS, MasterTransport } from './masterTransport';
+import { drawWrist } from './tactileView';
 
 /** How early (in sixteenths) a hit may land and still count as the next downbeat (v7 value). */
 const REC_EARLY = 0.6;
@@ -46,6 +47,17 @@ export interface ControllerHost {
   rootRef: { current: HTMLDivElement | null };
   canvasRef: { current: HTMLCanvasElement | null };
   stageRef: { current: HTMLDivElement | null };
+  tactile: TactileRefs;
+}
+
+/** DOM the controller updates every frame (tactile module, score playhead and marks). */
+export interface TactileRefs {
+  wrist: { current: HTMLCanvasElement | null };
+  box: { current: HTMLDivElement | null };
+  edgeL: { current: HTMLSpanElement | null };
+  edgeR: { current: HTMLSpanElement | null };
+  playhead: { current: HTMLSpanElement | null };
+  score: { current: HTMLDivElement | null };
 }
 
 interface PointerLike {
@@ -76,6 +88,8 @@ export class ResonanceController {
   dispatchLog: DispatchLog[] = [];
   private lid = 0;
   private lastAbs = 0;
+  /** Score marks currently lit, with the sim time their highlight ends. */
+  private lit = new Map<HTMLElement, number>();
   private raf = 0;
   private last = 0;
   private uiTimer = 0;
@@ -194,7 +208,7 @@ export class ResonanceController {
       this.rebuildScore();
     }
     if (ps && ps.muted !== st.muted) {
-      this.audio.setMuted(st.muted);
+      this.applyGain(st.muted);
     }
     if (!ps || ps.screen !== st.screen || ps.step !== st.step || ps.focus !== st.focus) {
       setTimeout(this.measureAvoid, 60);
@@ -1000,6 +1014,7 @@ export class ResonanceController {
     // Recording boundaries and loop playback are driven by the master transport (onStep / dispatch).
 
     // Pending (haptics UI): wristband canvases, tactile module edges.
+    this.drawTactile();
     this.field.render(dtk, this.host.props.trails);
   }
 
@@ -1084,7 +1099,53 @@ export class ResonanceController {
       this.setState({ audioOn: true });
     }
     this.audio.start();
-    this.audio.setMuted(this.state.muted);
+    this.applyGain();
+  }
+
+  /** Feel only fades the whole mix out slowly; mute is immediate (v7 applyGain). */
+  applyGain(muted = this.state.muted) {
+    const silent = this.sim.silent;
+    this.audio.setOutput(muted || silent, silent ? 0.9 : 0.15);
+  }
+
+  /** Playback mode changes outputs only; the master clock keeps running (v7 setPlayMode). */
+  setPlayMode(k: AppState['playMode']) {
+    const s = this.sim;
+    s.silent = k === 'feel';
+    s.noHaptic = k === 'hear';
+    if (k !== 'feel') {
+      this.ensureAudio();
+    }
+    this.applyGain();
+    this.setState({ playMode: k });
+    if (s.transport === 'paused' && this.perf.layers.length) {
+      this.togglePlay();
+    }
+  }
+
+  // ---- wristband hardware
+
+  connectBand() {
+    void this.hap.hw.connect();
+  }
+
+  disconnectBand() {
+    this.hap.hw.disconnect();
+  }
+
+  /** Hardware test bypasses Feel modes on purpose: it checks the circuit, not the music. */
+  hwTestFire(chs: Channel[]) {
+    const v = { low: 90, med: 170, high: 255 }[this.state.hwLevel] ?? 170;
+    const ms = 150;
+    this.hap.send(
+      chs.map((channel) => ({ channel, intensity: v / 255, duration: ms, type: 'test' })),
+    );
+    this.setState({
+      hwLast:
+        'Sent ' +
+        chs.map((c) => (c === 'rhythm' ? 'R' : 'E') + ',' + v + ',' + ms).join('  ') +
+        (this.state.bandHw === 'connected' ? '' : '  (simulated only)'),
+    });
   }
 
   noteStart(midi: number, vel: number, inst: string) {
@@ -1158,6 +1219,113 @@ export class ResonanceController {
   /** Metronome + every layer, quantized, as one 4-bar score on the master loop. */
   rebuildScore(bpm = this.transport.bpm) {
     this.transport.setScore(R.buildLayered({ bpm, layers: this.perf.layers, q: this.state.quant }));
+    this.publishScore();
+  }
+
+  /**
+   * Republishes the tactile score's marks to React: every layer, plus the take being recorded
+   * (shown dimmed). Only called when the score changes, never per frame.
+   */
+  publishScore() {
+    const s = this.sim;
+    const layers = this.perf.layers.slice();
+    const take = s.rec && !s.rec.closing ? s.rec : null;
+    if (take && s.recRaw.length) {
+      layers.push({ id: 'rec', inst: take.inst, raw: s.recRaw, muted: false, rec: true });
+    }
+    const view = R.buildLayered({ bpm: this.transport.bpm, layers, q: this.state.quant });
+    this.setState({
+      score: {
+        len: view.len,
+        marks: view.events.map((e) => ({
+          id: e.id,
+          t: e.t,
+          layer: e.layer,
+          inst: e.inst,
+          drum: e.drum,
+          metro: e.metro,
+          step: e.step,
+          dur: e.duration ?? 0,
+          vel: e.velocity ?? 0.6,
+          legato: e.articulation === 'legato',
+          accent: e.accent,
+          muted: e.muted,
+          rec: e.rec,
+          felt: e.haptic.length > 0,
+        })),
+        legend: this.perf.layers
+          .map((l) => ({ inst: l.inst, muted: l.muted, rec: false }))
+          .concat(take ? [{ inst: take.inst, muted: false, rec: true }] : []),
+      },
+    });
+  }
+
+  /** Light a fired event's marks on the score until its felt duration ends (v7 scoreGeom "on"). */
+  private flashScore(ev: MusicEvent) {
+    const root = this.host.tactile.score.current;
+    if (!root) {
+      return;
+    }
+    const mel = ev.layer === 'melody' || ev.layer === 'note';
+    const held = mel && ev.articulation === 'legato' ? Math.min(ev.duration ?? 0, 1.5) : 0.16;
+    const until = this.sim.t + Math.max(0.16, held);
+    root.querySelectorAll<HTMLElement>(`[data-ev="${CSS.escape(ev.id)}"]`).forEach((el) => {
+      el.dataset.on = '1';
+      this.lit.set(el, until);
+    });
+  }
+
+  /** Per frame: wristband canvas, tactile module edges, score playhead and mark expiry (v7). */
+  private drawTactile() {
+    const s = this.sim;
+    const refs = this.host.tactile;
+    const st = this.state;
+    const levels = this.hap.sim.levels(performance.now());
+    const off = st.feel === 'off';
+    const allowed = {
+      rhythm: this.chanAllowed('rhythm'),
+      expression: this.chanAllowed('expression'),
+    };
+    drawWrist(refs.wrist.current, {
+      levels,
+      allowed,
+      off,
+      reduced: s.reduced,
+      big: false,
+      hidden: false,
+    });
+
+    // Module edges answer their own motor; the whole border lifts only when both fire together.
+    const p = off || !allowed.rhythm ? 0 : levels.rhythm;
+    const e = off || !allowed.expression ? 0 : levels.expression;
+    if (refs.edgeL.current) {
+      refs.edgeL.current.style.opacity = (p * 0.8).toFixed(3);
+    }
+    if (refs.edgeR.current) {
+      refs.edgeR.current.style.opacity = (e * 0.8).toFixed(3);
+    }
+    const box = refs.box.current;
+    if (box) {
+      const both = Math.min(p, e);
+      box.style.borderColor =
+        st.bandHw === 'connected'
+          ? 'rgba(127,224,236,' + (0.16 + both * 0.22).toFixed(3) + ')'
+          : 'rgba(236,230,216,' + (0.1 + both * 0.18).toFixed(3) + ')';
+    }
+
+    const ph = this.clockPhase();
+    const head = refs.playhead.current;
+    if (head) {
+      head.style.left = (Math.max(0, ph) * 100).toFixed(2) + '%';
+      head.style.opacity = ph >= 0 && s.screen === 'studio' ? '0.9' : '0';
+    }
+
+    for (const [el, until] of this.lit) {
+      if (s.t >= until || !el.isConnected) {
+        delete el.dataset.on;
+        this.lit.delete(el);
+      }
+    }
   }
 
   /** Runs once per sixteenth on the transport, before that step's events. */
@@ -1219,6 +1387,7 @@ export class ResonanceController {
         this.sendHaptics(haptic[0], haptic[1]);
       }
       s.fired[ev.id] = s.t;
+      this.flashScore(ev);
     }, time);
   };
 
@@ -1234,11 +1403,10 @@ export class ResonanceController {
       this.audio.hit(time, meta);
     } else if (ev.layer === 'drum' && ev.drum) {
       this.audio.drum(ev.drum, ev.velocity ?? 0.7, time, meta);
-    } else if (ev.layer === 'note' && ev.inst === 'bass' && ev.midi != null) {
+    } else if (ev.layer === 'note' && ev.inst && ev.midi != null) {
       const dur = ev.articulation === 'staccato' ? 0.14 : Math.max(0.15, ev.duration ?? 0.15);
-      this.audio.bassNote(ev.midi, dur, ev.velocity ?? 0.6, time, meta);
+      this.audio.note(ev.inst, ev.midi, dur, ev.velocity ?? 0.6, time, meta);
     }
-    // Pending (Keys / Lead): their voices arrive in a later milestone.
   }
 
   /**
@@ -1262,7 +1430,7 @@ export class ResonanceController {
         ];
   }
 
-  /** Particles: beat, downbeat, drum hit, bass note, flick hit (ported from v7 visualFor). */
+  /** Particles: beat, downbeat, drum hit, bass / keys / lead note, flick hit (v7 visualFor). */
   private visualFor(ev: MusicEvent) {
     const s = this.sim;
     const W = s.W;
@@ -1330,6 +1498,24 @@ export class ResonanceController {
           decay: 0.006,
           col: '169,155,255',
         });
+      } else if (ev.inst === 'keys') {
+        s.ripples.push({
+          x,
+          y,
+          r: 0,
+          v: s.reduced ? 1.8 : 2.4,
+          w: 90,
+          s: rm,
+          life: 1,
+          decay: 0.008,
+          col: '236,230,216',
+        });
+        if (!s.focus) {
+          s.floats.push({ x, y: y - 30, text: ev.note || '', life: 0.8 });
+          if (s.floats.length > 12) {
+            s.floats.shift();
+          }
+        }
       } else {
         this.melodyVisual(x, y, ev.note || '', true, true, ev.accent);
       }
@@ -1414,6 +1600,7 @@ export class ResonanceController {
       sheet: 'closed',
       scoreVer: ++this.ver,
     });
+    this.publishScore();
   }
 
   /** Stores a live event relative to the master loop start (seconds into the 4-bar loop). */
@@ -1436,6 +1623,8 @@ export class ResonanceController {
     s.recRaw.push({ ...r, t, dur });
     if (rc.closing) {
       this.rebuildScore();
+    } else {
+      this.publishScore();
     }
   }
 
@@ -1494,6 +1683,7 @@ export class ResonanceController {
       recInst: null,
       scoreVer: ++this.ver,
     });
+    this.publishScore();
   }
 
   // ---- transport controls
@@ -1557,6 +1747,7 @@ export class ResonanceController {
     s.pulseHits = [];
     s.silent = false;
     s.noHaptic = false;
+    this.applyGain();
     this.perf.layers = [];
     this.rebuildScore();
     s.boost = 0;
