@@ -1,4 +1,4 @@
-import type { Channel, MusicEvent } from './engine';
+import type { Channel, InstKey, RawNote } from './engine';
 
 /**
  * Mutable per-frame state shared by the controller and the particle field.
@@ -62,6 +62,8 @@ export interface Hand {
 }
 export interface LiveNote {
   start: number;
+  /** Transport position (sixteenths) when the note started. */
+  startStep: number;
   slot: number;
   midi: number;
   vel: number;
@@ -70,22 +72,21 @@ export interface LiveNote {
   inst: string;
   done?: boolean;
 }
+/** Set while the master transport runs. The transport owns all timing; this is a running flag + loop facts. */
 export interface Clock {
-  kind: string;
-  events: MusicEvent[];
+  kind: 'master';
   len: number;
   bpm: number;
-  preset?: string;
-  start: number;
-  prev: number;
-  loop: boolean;
-  onEnd?: () => void;
 }
+
+/** A recording window, in absolute transport sixteenths. */
 export interface RecWindow {
-  inst: string;
-  ci: number;
-  start: number;
-  end: number;
+  inst: InstKey;
+  ciStep: number;
+  startStep: number;
+  endStep: number;
+  /** The layer is committed at endStep; late events inside the scheduler lookahead still land in it. */
+  closing?: boolean;
 }
 
 export interface Sim {
@@ -119,7 +120,7 @@ export interface Sim {
   fired: Record<string, number>;
   live: LiveNote | null;
   lastLive: null;
-  recRaw: unknown[];
+  recRaw: RawNote[];
   recBase: unknown[];
   lastCue: string;
   cueT: number;
@@ -132,7 +133,8 @@ export interface Sim {
   rec: RecWindow | null;
   pulseHits: number[];
   layerFire: Record<string, number>;
-  inst: string;
+  inst: InstKey;
+  /** Absolute transport step until which the status reads "Loop ready". */
   loopReadyUntil: number;
   beatT: number;
   holds: Hold[];

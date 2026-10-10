@@ -12,6 +12,14 @@ export type PrototypeProps = typeof PROTOTYPE_PROPS;
 
 export type Feel = 'full' | 'rhythm' | 'expression' | 'off';
 
+/** Instruments available in this milestone, in recording order. Keys and Lead arrive later. */
+export const MILESTONE_INSTRUMENTS: InstKey[] = ['drums', 'bass'];
+
+/** Instruments not yet recorded, in order. */
+export function availableInstruments(layers: { inst: InstKey }[]) {
+  return MILESTONE_INSTRUMENTS.filter((k) => !layers.some((l) => l.inst === k));
+}
+
 /**
  * React-owned application state.
  * Field names match the prototype's `this.state` so ported logic reads the same.
@@ -68,6 +76,14 @@ export interface AppState {
   /** Mirrors of sim.prevBpm / sim.viaPulse, so render code never reads the mutable sim. */
   prevBpm: number | null;
   viaPulse: boolean;
+  /** Mirror of the controller's recorded layers (id, instrument, mute) for display. */
+  layers: LayerSummary[];
+}
+
+export interface LayerSummary {
+  id: string;
+  inst: InstKey;
+  muted: boolean;
 }
 
 export type StatePatch = Partial<AppState> | ((s: AppState) => Partial<AppState>);
@@ -118,6 +134,7 @@ export function initialState(): AppState {
     quiz: { phase: 'learn', which: null, guess: null, playing: null, showScore: false },
     prevBpm: null,
     viaPulse: false,
+    layers: [],
   };
 }
 
@@ -144,6 +161,8 @@ export interface Ui {
   flash: number;
   active: boolean;
   cue: string;
+  /** True for one loop after a layer finishes recording. */
+  loopReady: boolean;
 }
 
 const INITIAL_UI: Ui = {
@@ -168,6 +187,7 @@ const INITIAL_UI: Ui = {
   active: false,
   cue: '',
   energy: 0,
+  loopReady: false,
 };
 
 function sameUi(a: Ui, b: Ui) {

@@ -1,8 +1,42 @@
 import * as R from './engine';
-import type { Channel, HapticCmd, PerfLayer } from './engine';
+import type { Channel, HapticCmd, InstKey, MusicEvent, PerfLayer, RawNote } from './engine';
 import { ParticleField } from './particleField';
 import { createSim, type Sim, type Transport } from './sim';
-import type { AppState, Feel, PrototypeProps, StatePatch, UiStore } from './appState';
+import {
+  availableInstruments,
+  type AppState,
+  type Feel,
+  type PrototypeProps,
+  type StatePatch,
+  type UiStore,
+} from './appState';
+import { AudioEngine, type TriggerMeta } from './audioEngine';
+import { BAR_STEPS, LOOP_STEPS, MasterTransport } from './masterTransport';
+
+/** How early (in sixteenths) a hit may land and still count as the next downbeat (v7 value). */
+const REC_EARLY = 0.6;
+
+/**
+ * A cursor flick followed this quickly by a click is one gesture — travel into a zone, then the
+ * hit — so only the click is recorded.
+ */
+const FLICK_CLICK_MERGE_MS = 200;
+
+/** A recorded event before it is placed on the loop (time and duration are derived on capture). */
+type RecInput = Omit<RawNote, 't' | 'dur'> & { dur?: number };
+
+/** Dev-only record of dispatched loop events, for timing verification. */
+export interface DispatchLog {
+  id: string;
+  layer: string;
+  lid: string | null;
+  t: number;
+  time: number;
+  abs: number;
+  origin: number;
+  s16: number;
+  run: number;
+}
 
 export interface ControllerHost {
   getState(): AppState;
@@ -34,18 +68,32 @@ export class ResonanceController {
   sim: Sim;
   field: ParticleField;
   hap = new R.HapticRouter();
+  audio = new AudioEngine();
+  transport: MasterTransport;
   perf: { layers: PerfLayer[] } = { layers: [] };
   ver = 0;
+  /** Dev builds only: every dispatched loop event, for timing verification. */
+  dispatchLog: DispatchLog[] = [];
+  private lid = 0;
+  private lastAbs = 0;
   private raf = 0;
   private last = 0;
   private uiTimer = 0;
   private avTimer = 0;
   private fmT = 0;
   private lastFlick = 0;
+  /** The most recent cursor flick and the event it recorded, if any. */
+  private cursorFlick: { wall: number; ev: RawNote | null } | null = null;
   private lp: { y: number; t: number } | null = null;
   private td: { y: number; t: number } | null = null;
-  private ps: { reduced: boolean; screen: string; step: number; focus: string | null } | null =
-    null;
+  private ps: {
+    reduced: boolean;
+    screen: string;
+    step: number;
+    focus: string | null;
+    quant: string;
+    muted: boolean;
+  } | null = null;
 
   FEELS: [Feel, string][] = [
     ['full', 'Full'],
@@ -71,6 +119,10 @@ export class ResonanceController {
     const screen = host.props.startScreen || 'welcome';
     this.sim = createSim(screen, reduced);
     this.field = new ParticleField(this.sim);
+    this.transport = new MasterTransport({ onStep: this.onStep, onEvent: this.dispatch });
+    if (import.meta.env.DEV) {
+      (window as unknown as { __resonance?: ResonanceController }).__resonance = this;
+    }
     this.boot(reduced, screen);
   }
 
@@ -115,14 +167,22 @@ export class ResonanceController {
     window.removeEventListener('pointerup', this.onUp);
     // Pending (camera): stop the media stream and close the hand tracker.
     this.hap.hw.disconnect();
-    // Pending (audio): close the AudioContext.
+    this.transport.dispose();
+    this.audio.dispose();
   }
 
   /** The prototype's componentDidUpdate: pushes React state into the sim. */
   didUpdate(st: AppState) {
     const s = this.sim;
     const ps = this.ps;
-    this.ps = { reduced: st.reduced, screen: st.screen, step: st.step, focus: st.focus };
+    this.ps = {
+      reduced: st.reduced,
+      screen: st.screen,
+      step: st.step,
+      focus: st.focus,
+      quant: st.quant,
+      muted: st.muted,
+    };
     s.screen = st.screen;
     s.step = st.step;
     s.muted = st.muted;
@@ -130,8 +190,12 @@ export class ResonanceController {
       s.reduced = st.reduced;
       this.field.initParticles(this.host.props.density);
     }
-    // Pending (transport): rebuildMaster() when quant changes.
-    // Pending (audio): applyGain() when muted changes.
+    if (ps && ps.quant !== st.quant) {
+      this.rebuildScore();
+    }
+    if (ps && ps.muted !== st.muted) {
+      this.audio.setMuted(st.muted);
+    }
     if (!ps || ps.screen !== st.screen || ps.step !== st.step || ps.focus !== st.focus) {
       setTimeout(this.measureAvoid, 60);
     }
@@ -319,7 +383,7 @@ export class ResonanceController {
       const dy = e.clientY - lp.y;
       if (dt > 0 && dt < 60 && dy > 18 && dy / dt > 2.6 && now - (this.lastFlick || 0) > 450) {
         this.lastFlick = now;
-        this.flick(h.tx, h.ty);
+        this.flick(h.tx, h.ty, true);
       }
     }
   };
@@ -374,6 +438,7 @@ export class ResonanceController {
     }
     h.pinch = true;
     h.lastMove = s.t;
+    this.absorbCursorFlick();
     if (this.liveInst() === 'drums') {
       this.drumHit();
     } else {
@@ -416,7 +481,16 @@ export class ResonanceController {
     const midi = R.midiFor(inst, slot, p);
     const vel = this.liveVel();
     const acc = vel >= 0.85;
-    s.live = { start: s.t, slot, midi, vel, slur, holdSent: false, inst };
+    s.live = {
+      start: s.t,
+      startStep: this.transport.nowStep(),
+      slot,
+      midi,
+      vel,
+      slur,
+      holdSent: false,
+      inst,
+    };
     s.heldNote = slot;
     this.melodyVisual(h.x, h.y, R.noteName(midi), !slur, false, acc);
     if (this.audible()) {
@@ -452,7 +526,7 @@ export class ResonanceController {
     if (!n.done) {
       this.recEvent(
         { layer: 'note', dur, slot: n.slot, vel: n.vel, art, accent: n.vel >= 0.85 },
-        n.start,
+        n.startStep,
       );
     }
     s.live = null;
@@ -520,7 +594,7 @@ export class ResonanceController {
     }
     this.recEvent(
       { layer: 'drum', drum, slot, vel, dur: 0.08, art: 'staccato', accent: vel >= 0.85 },
-      s.t,
+      this.transport.nowStep(),
     );
   }
 
@@ -644,8 +718,7 @@ export class ResonanceController {
   }
 
   available() {
-    const used = this.perf.layers.map((l) => l.inst);
-    return R.INSTR_ORDER.filter((k) => !used.includes(k));
+    return availableInstruments(this.perf.layers);
   }
 
   toggleClick = () => this.setState((x) => ({ clickOn: !x.clickOn }));
@@ -661,7 +734,7 @@ export class ResonanceController {
     const s = this.sim;
     this.ensureAudio();
     s.prevBpm = this.state.bpm;
-    s.clock = null;
+    this.stopMaster();
     s.pulseHits = [];
     s.beatInBar = -1;
     this.setTransport('finding', {
@@ -677,7 +750,7 @@ export class ResonanceController {
     const pb = s.prevBpm;
     s.pulseHits = [];
     if (pb) {
-      this.startMaster(s.t, pb);
+      this.startMaster(pb);
       this.setTransport('found', { bpm: pb, pulse: { n: 0, msg: '' } });
     } else {
       this.setTransport('ready', { pulse: { n: 0, msg: '' } });
@@ -690,7 +763,7 @@ export class ResonanceController {
     this.ensureAudio();
     s.pulseHits = [];
     s.viaPulse = false;
-    this.startMaster(s.t, bpm);
+    this.startMaster(bpm);
     this.setTransport('found', { bpm, pulse: { n: 0, msg: '' }, viaPulse: false });
   }
 
@@ -699,8 +772,8 @@ export class ResonanceController {
     const bpm = this.state.bpm || s.prevBpm || 100;
     this.ensureAudio();
     s.pulseHits = [];
-    if (!s.clock || s.clock.kind !== 'master' || s.transport === 'finding') {
-      this.startMaster(s.t, bpm);
+    if (!this.transport.running || s.transport === 'finding') {
+      this.startMaster(bpm);
     }
     this.setTransport('found', { bpm, screen: 'studio', pulse: { n: 0, msg: '' } });
   };
@@ -718,7 +791,7 @@ export class ResonanceController {
     hs.push(now);
     const r = R.estimateBpm(hs);
     if (r.ok) {
-      return this.pulseFound(r.bpm as number, s.t);
+      return this.pulseFound(r.bpm as number);
     }
     if (hs.length >= 8) {
       s.pulseHits = [];
@@ -729,11 +802,12 @@ export class ResonanceController {
 
   // The last steady hit becomes beat 1 of the master loop,
   // so the metronome carries on from the performer's own pulse.
-  pulseFound(bpm: number, at: number) {
+  pulseFound(bpm: number) {
     const s = this.sim;
     s.pulseHits = [];
     s.viaPulse = true;
-    this.startMaster(at, bpm);
+    // The transport restarts now, so the hit that completed the pulse is beat 1.
+    this.startMaster(bpm);
     s.ripples.push({
       x: s.W * 0.5,
       y: s.H * 0.55,
@@ -755,11 +829,12 @@ export class ResonanceController {
 
   // Flick = musical hit: big wave, both motors, accent sound.
   // Recorded into the loop like any other event.
-  flick(x: number, y: number) {
+  flick(x: number, y: number, fromCursor = false) {
     const s = this.sim;
     if (s.focus) {
       return;
     }
+    const before = s.recRaw.length;
     const rm = s.reduced ? 0.4 : 1;
     s.ripples.push({
       x,
@@ -789,8 +864,36 @@ export class ResonanceController {
     }
     this.recEvent(
       { layer: 'hit', dur: 0.1, slot: -1, vel: 1, art: 'staccato', accent: true, gesture: 'flick' },
-      s.t,
+      this.transport.nowStep(),
     );
+    this.cursorFlick = fromCursor
+      ? {
+          wall: performance.now(),
+          ev: s.recRaw.length > before ? s.recRaw[s.recRaw.length - 1] : null,
+        }
+      : null;
+  }
+
+  /**
+   * A click right after a cursor flick is one gesture (moving into a zone, then hitting), not two
+   * hits. The click is the intended hit, so the flick's recorded event is withdrawn.
+   */
+  private absorbCursorFlick() {
+    const f = this.cursorFlick;
+    this.cursorFlick = null;
+    if (!f || !f.ev || performance.now() - f.wall > FLICK_CLICK_MERGE_MS) {
+      return;
+    }
+    const s = this.sim;
+    const owners = [s.recRaw, ...this.perf.layers.map((l) => l.raw)];
+    for (const raw of owners) {
+      const i = raw.indexOf(f.ev);
+      if (i >= 0) {
+        raw.splice(i, 1);
+        this.rebuildScore();
+        return;
+      }
+    }
   }
 
   // ---- frame
@@ -894,11 +997,9 @@ export class ResonanceController {
     const eRaw = h.amt > 0.2 ? Math.min(1, h.speed / 22) : 0;
     s.energy += (eRaw - s.energy) * Math.min(1, (eRaw > s.energy ? 0.08 : 0.02) * dtk);
 
-    // Pending (recording): count-in → recording → finishRecording transitions on s.rec.
-    this.clockStep();
+    // Recording boundaries and loop playback are driven by the master transport (onStep / dispatch).
 
-    // Pending (transport/haptics UI): playheads, wristband canvases, score autoscroll,
-    // tactile module edges.
+    // Pending (haptics UI): wristband canvases, tactile module edges.
     this.field.render(dtk, this.host.props.trails);
   }
 
@@ -912,31 +1013,34 @@ export class ResonanceController {
     const midi = R.midiFor(inst, slot, p);
     const tr = s.transport;
     const c = s.clock;
-    const bpm = this.state.bpm;
+    const now = this.transport.nowStep();
     let timer = 0;
     let total = 0;
     let count = 0;
     let recBar = 0;
     const ph = this.clockPhase();
-    if (c && c.kind === 'master') {
+    if (c) {
       total = c.len;
       timer = Math.max(0, ph) * c.len;
     }
-    if (s.rec && bpm) {
-      const bt = 60 / bpm;
+
+    // Count-in (4 → 1) and recording bar, read from the transport position.
+    const rc = s.rec;
+    if (rc && now >= 0) {
       if (tr === 'countin') {
-        const el = s.t - s.rec.ci;
-        count = el < 0 ? 0 : Math.max(1, 4 - Math.floor(el / bt));
+        const beats = (now - rc.ciStep) / 4;
+        count = beats < 0 ? 0 : Math.max(1, 4 - Math.floor(beats));
       } else {
-        recBar = Math.min(4, Math.floor((s.t - s.rec.start) / (bt * 4)) + 1);
+        recBar = Math.max(1, Math.min(4, Math.floor((now - rc.startStep) / BAR_STEPS) + 1));
       }
     }
+
     const act: Record<string, boolean> = {};
     this.perf.layers.forEach((l) => {
       act[l.id] = s.t - (s.layerFire[l.id] || -9) < 0.16;
     });
     const handIn = !!(s.handSeen && s.t - s.handSeen < 0.5);
-    // Pending (audio): Tone filter follows energy and two-hand spread.
+    this.audio.setEnergy(s.energy, s.spread);
     if (handIn !== this.state.handIn) {
       this.setState({ handIn });
     }
@@ -962,38 +1066,545 @@ export class ResonanceController {
       flash: s.noteFlash,
       active: h.amt > 0.2,
       cue: s.t - s.cueT < 1.4 ? s.lastCue : '',
+      loopReady: tr === 'playing' && now >= 0 && now < s.loopReadyUntil,
     });
   };
 
   clockPhase() {
+    return this.sim.clock ? this.transport.phase() : -1;
+  }
+
+  // ---- audio
+
+  /** Called from user gestures only (autoplay policy). */
+  ensureAudio() {
     const s = this.sim;
-    const c = s.clock;
-    if (!c) {
-      return -1;
+    s.audioOn = true;
+    if (!this.state.audioOn) {
+      this.setState({ audioOn: true });
     }
-    const raw = s.t - c.start;
-    return c.loop ? (raw % c.len) / c.len : Math.min(1, raw / c.len);
+    this.audio.start();
+    this.audio.setMuted(this.state.muted);
+  }
+
+  noteStart(midi: number, vel: number, inst: string) {
+    this.audio.noteStart(midi, vel, inst, this.liveMeta('live'));
+  }
+
+  noteEnd(midi: number, inst: string) {
+    this.audio.noteEnd(midi, inst);
+  }
+
+  drumSound(d: R.DrumKey, vel: number) {
+    this.audio.drum(d, vel, undefined, this.liveMeta('live'));
+  }
+
+  hitSound() {
+    this.audio.hit(undefined, this.liveMeta('flick-live'));
+  }
+
+  /** Dev diagnostics: where a live trigger sits on the master loop. */
+  private liveMeta(source: 'live' | 'flick-live'): TriggerMeta | undefined {
+    if (!import.meta.env.DEV) {
+      return undefined;
+    }
+    const tp = this.transport;
+    const now = tp.nowStep();
+    return {
+      source,
+      step: now,
+      loopTime: now >= 0 ? tp.loopSeconds(now) : -1,
+      transport: this.sim.transport,
+      iteration: now >= 0 ? Math.floor((now - tp.origin) / LOOP_STEPS) : -1,
+    };
+  }
+
+  /** Dev diagnostics: which loop event produced a scheduled trigger. */
+  private eventMeta(ev: MusicEvent): TriggerMeta | undefined {
+    if (!import.meta.env.DEV) {
+      return undefined;
+    }
+    return {
+      source: ev.metro ? 'metronome' : ev.layer === 'hit' ? 'flick-playback' : 'playback',
+      id: ev.id,
+      step: this.lastAbs,
+      loopTime: ev.t,
+      transport: this.sim.transport,
+      iteration: Math.floor((this.lastAbs - this.transport.origin) / LOOP_STEPS),
+    };
+  }
+
+  /** The audible click plays while setting tempo, counting in and recording — never in playback. */
+  clickAudible() {
+    const tr = this.sim.transport;
+    return this.state.clickOn && (tr === 'countin' || tr === 'recording' || tr === 'found');
+  }
+
+  // ---- master transport
+
+  /** (Re)starts the master clock from beat 1 at `bpm`. Loop bar 1 begins at absolute step `origin`. */
+  startMaster(bpm: number, origin = 0) {
+    this.transport.start(bpm, origin);
+    this.rebuildScore(bpm);
+    this.sim.clock = { kind: 'master', len: this.transport.len, bpm };
+  }
+
+  stopMaster() {
+    this.transport.stop();
+    this.sim.clock = null;
+    this.sim.beatInBar = -1;
+  }
+
+  /** Metronome + every layer, quantized, as one 4-bar score on the master loop. */
+  rebuildScore(bpm = this.transport.bpm) {
+    this.transport.setScore(R.buildLayered({ bpm, layers: this.perf.layers, q: this.state.quant }));
+  }
+
+  /** Runs once per sixteenth on the transport, before that step's events. */
+  private onStep = (abs: number, time: number) => {
+    this.lastAbs = abs;
+    const s = this.sim;
+    const rc = s.rec;
+    if (!rc) {
+      return;
+    }
+    if (s.transport === 'countin' && abs >= rc.startStep) {
+      s.transport = 'recording';
+      this.transport.draw(() => {
+        if (s.rec === rc) {
+          this.setState({ transport: 'recording' });
+        }
+      }, time);
+    }
+    if (!rc.closing && abs >= rc.endStep) {
+      this.commitRecording(time);
+    }
+  };
+
+  /** Runs for every loop event at its exact transport time. */
+  private dispatch = (ev: MusicEvent, time: number) => {
+    const s = this.sim;
+    if (ev.muted || ev.rec) {
+      return;
+    }
+    if (import.meta.env.DEV) {
+      this.dispatchLog.push({
+        id: ev.id,
+        layer: ev.layer,
+        lid: ev.lid,
+        t: ev.t,
+        time,
+        abs: this.lastAbs,
+        origin: this.transport.origin,
+        s16: this.transport.s16,
+        run: this.transport.run,
+      });
+      if (this.dispatchLog.length > 20000) {
+        this.dispatchLog.splice(0, 5000);
+      }
+    }
+    if (this.audible()) {
+      this.audioFor(ev, time);
+    }
+    // Decide haptics now, while the transport state matches this event's time.
+    const haptic: [HapticCmd[], string] | null = ev.metro
+      ? this.metroHaptic(ev)
+      : [ev.haptic || R.compile(ev), R.describe(ev)];
+    this.transport.draw(() => {
+      if (ev.lid) {
+        s.layerFire[ev.lid] = s.t;
+      }
+      this.visualFor(ev);
+      if (haptic) {
+        this.sendHaptics(haptic[0], haptic[1]);
+      }
+      s.fired[ev.id] = s.t;
+    }, time);
+  };
+
+  private audioFor(ev: MusicEvent, time: number) {
+    const meta = this.eventMeta(ev);
+    if (ev.metro) {
+      if (this.clickAudible()) {
+        this.audio.click(ev.accent, time, meta);
+      }
+      return;
+    }
+    if (ev.layer === 'hit') {
+      this.audio.hit(time, meta);
+    } else if (ev.layer === 'drum' && ev.drum) {
+      this.audio.drum(ev.drum, ev.velocity ?? 0.7, time, meta);
+    } else if (ev.layer === 'note' && ev.inst === 'bass' && ev.midi != null) {
+      const dur = ev.articulation === 'staccato' ? 0.14 : Math.max(0.15, ev.duration ?? 0.15);
+      this.audio.bassNote(ev.midi, dur, ev.velocity ?? 0.6, time, meta);
+    }
+    // Pending (Keys / Lead): their voices arrive in a later milestone.
+  }
+
+  /**
+   * Count-in / recording: Pulse is the tactile metronome, beat 1 strongest.
+   * Playback: Pulse carries only the composition's own rhythm events. The v7 fallback that
+   * invented a beat-1 pulse when no drums were sounding is intentionally not carried over.
+   */
+  private metroHaptic(ev: MusicEvent): [HapticCmd[], string] | null {
+    const tr = this.sim.transport;
+    if (tr !== 'countin' && tr !== 'recording') {
+      return null;
+    }
+    return ev.accent
+      ? [
+          [{ channel: 'rhythm', intensity: 1, duration: 140, type: 'downbeat' }],
+          'Pulse · metronome 1',
+        ]
+      : [
+          [{ channel: 'rhythm', intensity: 0.55, duration: 45, type: 'beat' }],
+          'Pulse · metronome ' + ev.beat,
+        ];
+  }
+
+  /** Particles: beat, downbeat, drum hit, bass note, flick hit (ported from v7 visualFor). */
+  private visualFor(ev: MusicEvent) {
+    const s = this.sim;
+    const W = s.W;
+    const H = s.H;
+    const len = this.transport.len;
+    const rm = (s.reduced ? 0.4 : 1) * (s.focus ? 0.55 : 1);
+
+    if (ev.metro) {
+      s.beatInBar = ev.beat - 1;
+      s.beatT = s.t;
+      s.ripples.push({
+        x: W * 0.5,
+        y: H * 0.6,
+        r: 0,
+        v: s.reduced ? 4 : 6.5,
+        w: 90,
+        s: (ev.accent ? 0.7 : 0.2) * rm,
+        life: 1,
+        decay: 0.0055,
+      });
+      if (ev.accent) {
+        s.boost = Math.min(0.5, s.boost + 0.05);
+      }
+      if (s.ripples.length > 16) {
+        s.ripples.shift();
+      }
+      return;
+    }
+
+    if (ev.layer === 'drum') {
+      const x = W * (0.16 + 0.68 * (ev.t / len));
+      const y = ev.drum === 'kick' ? H * 0.78 : ev.drum === 'snare' ? H * 0.6 : H * 0.42;
+      const v = ev.velocity ?? 0.7;
+      s.ripples.push({
+        x,
+        y,
+        r: 0,
+        v: s.reduced ? 3 : 4.4,
+        w: 44,
+        s: (ev.drum === 'kick' ? 1.7 : ev.drum === 'snare' ? 1.1 : 0.55) * (0.6 + 0.4 * v) * rm,
+        life: 1,
+        decay: 0.022,
+        hot: ev.drum === 'kick' ? 1 : 0,
+      });
+      if (s.ripples.length > 16) {
+        s.ripples.shift();
+      }
+      return;
+    }
+
+    if (ev.layer === 'note') {
+      const x = W * (0.16 + 0.68 * (ev.t / len));
+      const y = this.yForSlot(ev.slot ?? 0);
+      const held = ev.articulation === 'legato';
+      const v = ev.velocity ?? 0.6;
+      if (ev.inst === 'bass') {
+        s.ripples.push({
+          x,
+          y: H * 0.86,
+          r: 0,
+          v: s.reduced ? 2.4 : 3.2,
+          w: 150,
+          s: 0.85 * v * rm,
+          life: 1,
+          decay: 0.006,
+          col: '169,155,255',
+        });
+      } else {
+        this.melodyVisual(x, y, ev.note || '', true, true, ev.accent);
+      }
+      if (held && !s.hideWrist) {
+        s.holds.push({
+          x,
+          y: ev.inst === 'bass' ? H * 0.82 : y,
+          end: s.t + Math.min(ev.duration ?? 0, 3),
+        });
+        if (s.holds.length > 4) {
+          s.holds.shift();
+        }
+      }
+      if (s.ripples.length > 16) {
+        s.ripples.shift();
+      }
+      return;
+    }
+
+    if (ev.layer === 'hit') {
+      s.ripples.push({
+        x: W * 0.5,
+        y: H * 0.5,
+        r: 0,
+        v: s.reduced ? 4 : 6.5,
+        w: 100,
+        s: 0.95 * rm,
+        life: 1,
+        decay: 0.012,
+        hot: 1,
+      });
+      s.boost = Math.min(0.5, s.boost + 0.25);
+      if (s.ripples.length > 16) {
+        s.ripples.shift();
+      }
+    }
+  }
+
+  // ---- recording
+
+  /**
+   * One bar of count-in on the master grid, then exactly four bars.
+   * The first layer re-anchors the loop so its bar 1 is loop bar 1.
+   */
+  armRecord(inst: InstKey) {
+    const s = this.sim;
+    const bpm = this.state.bpm;
+    if (!bpm || s.rec) {
+      return;
+    }
+    this.ensureAudio();
+    const first = !this.perf.layers.length;
+    let ci: number;
+    if (!this.transport.running) {
+      // Start the clock on loop bar 4: the count-in bar begins now, loop bar 1 follows.
+      this.startMaster(bpm, BAR_STEPS);
+      ci = 0;
+    } else {
+      const now = this.transport.nowStep();
+      const o = this.transport.origin;
+      const barStart = o + BAR_STEPS * Math.floor((now - o) / BAR_STEPS);
+      // Pressed right on a downbeat: count in from this bar, otherwise from the next.
+      ci = now - barStart < BAR_STEPS * 0.12 ? barStart : barStart + BAR_STEPS;
+      if (first) {
+        this.transport.origin = ci + BAR_STEPS;
+      }
+    }
+    s.rec = {
+      inst,
+      ciStep: ci,
+      startStep: ci + BAR_STEPS,
+      endStep: ci + BAR_STEPS + LOOP_STEPS,
+    };
+    s.recRaw = [];
+    s.inst = inst;
+    if (s.hand.pinch) {
+      this.pinchEnd();
+    }
+    this.setTransport('countin', {
+      pick: false,
+      recInst: inst,
+      sheet: 'closed',
+      scoreVer: ++this.ver,
+    });
+  }
+
+  /** Stores a live event relative to the master loop start (seconds into the 4-bar loop). */
+  recEvent(r: RecInput, at: number) {
+    const s = this.sim;
+    const rc = s.rec;
+    if (!rc || at < 0) {
+      return;
+    }
+    // The window is exactly one loop long: it opens REC_EARLY before bar 1 (an early downbeat
+    // counts as beat 1) and closes REC_EARLY before the end of bar 4, because a hit there is the
+    // next loop's downbeat played early — already captured at the start, not a second hit.
+    if (at < rc.startStep - REC_EARLY || at >= rc.endStep - REC_EARLY) {
+      return;
+    }
+    const tp = this.transport;
+    const a = Math.max(at, rc.startStep);
+    const t = tp.loopSeconds(a);
+    const dur = Math.max(0.05, Math.min(r.dur ?? 0.08, (rc.endStep - a) * tp.s16, tp.len - t));
+    s.recRaw.push({ ...r, t, dur });
+    if (rc.closing) {
+      this.rebuildScore();
+    }
+  }
+
+  /**
+   * Bar 4 is over: the layer joins the loop on this very step, so its first events play at once.
+   * The window stays open until the boundary is heard, so late events inside the scheduler
+   * lookahead still land in the layer.
+   */
+  private commitRecording(time: number) {
+    const s = this.sim;
+    const rc = s.rec;
+    if (!rc) {
+      return;
+    }
+    const n = s.live;
+    if (n && !n.done) {
+      // A note still held at the boundary is captured up to the end of bar 4.
+      this.recEvent(
+        { layer: 'note', dur: Infinity, slot: n.slot, vel: n.vel, art: 'legato', accent: false },
+        n.startStep,
+      );
+      n.done = true;
+    }
+    rc.closing = true;
+    this.perf.layers.push({ id: 'L' + ++this.lid, inst: rc.inst, raw: s.recRaw, muted: false });
+    s.transport = 'playing';
+    s.loopReadyUntil = rc.endStep + LOOP_STEPS;
+    this.rebuildScore();
+    this.transport.draw(() => {
+      if (s.rec === rc) {
+        s.rec = null;
+        s.recRaw = [];
+      }
+      this.setState({
+        transport: 'playing',
+        recInst: null,
+        layers: this.layerSummary(),
+        layersVer: ++this.ver,
+        scoreVer: ++this.ver,
+      });
+    }, time);
+  }
+
+  cancelRecording() {
+    const s = this.sim;
+    const rc = s.rec;
+    if (!rc || rc.closing) {
+      return;
+    }
+    if (s.live) {
+      s.live.done = true;
+    }
+    s.rec = null;
+    s.recRaw = [];
+    this.setTransport(this.perf.layers.length ? 'playing' : 'found', {
+      recInst: null,
+      scoreVer: ++this.ver,
+    });
+  }
+
+  // ---- transport controls
+
+  /** Record button / R key: find pulse → record drums → add a layer. */
+  primary = () => {
+    const s = this.sim;
+    const tr = s.transport;
+    const n = this.perf.layers.length;
+    if (tr === 'ready') {
+      return this.findPulse();
+    }
+    if (tr === 'finding') {
+      return this.cancelPulse();
+    }
+    if (tr === 'countin' || tr === 'recording') {
+      return this.cancelRecording();
+    }
+    if (!n) {
+      return this.armRecord('drums');
+    }
+    if (this.available().length) {
+      this.setState((x) => ({ pick: !x.pick, sheet: 'closed' }));
+    }
+  };
+
+  /** Pause stops the transport; Play restarts the loop from bar 1 (as in v7). */
+  togglePlay = () => {
+    const s = this.sim;
+    const tr = s.transport;
+    const bpm = this.state.bpm;
+    if (!bpm || tr === 'countin' || tr === 'recording' || tr === 'finding') {
+      return;
+    }
+    this.ensureAudio();
+    if (tr === 'paused') {
+      this.startMaster(bpm);
+      this.setTransport(this.perf.layers.length ? 'playing' : 'found');
+    } else {
+      this.stopMaster();
+      this.hap.send([R.releaseCmd('expression')]);
+      this.audio.releaseAll();
+      this.setTransport('paused');
+    }
+  };
+
+  stop = () => {
+    const tr = this.sim.transport;
+    if (tr === 'playing' || tr === 'found') {
+      this.togglePlay();
+    }
+  };
+
+  reset = () => {
+    const s = this.sim;
+    this.stopMaster();
+    this.audio.releaseAll();
+    this.hap.send([R.releaseCmd('expression')]);
+    s.rec = null;
+    s.recRaw = [];
+    s.pulseHits = [];
+    s.silent = false;
+    s.noHaptic = false;
+    this.perf.layers = [];
+    this.rebuildScore();
+    s.boost = 0;
+    this.setTransport('ready', {
+      screen: 'tempo',
+      pick: false,
+      recInst: null,
+      playMode: 'both',
+      pulse: { n: 0, msg: '' },
+      layers: [],
+      layersVer: ++this.ver,
+      scoreVer: ++this.ver,
+    });
+  };
+
+  muteLayer(id: string) {
+    const l = this.perf.layers.find((x) => x.id === id);
+    if (!l) {
+      return;
+    }
+    l.muted = !l.muted;
+    this.rebuildScore();
+    this.setState({ layers: this.layerSummary(), layersVer: ++this.ver });
+  }
+
+  deleteLayer(id: string) {
+    const s = this.sim;
+    this.perf.layers = this.perf.layers.filter((l) => l.id !== id);
+    this.rebuildScore();
+    if (!this.perf.layers.length && s.transport === 'playing') {
+      s.transport = 'found';
+    }
+    this.setState({
+      layers: this.layerSummary(),
+      layersVer: ++this.ver,
+      scoreVer: ++this.ver,
+      transport: s.transport,
+      pick: false,
+    });
+  }
+
+  private layerSummary() {
+    return this.perf.layers.map((l) => ({ id: l.id, inst: l.inst, muted: l.muted }));
   }
 
   // ---- Pending subsystems
   // Each stub keeps the prototype's call sites intact until its milestone lands.
 
-  /** Pending (audio): Tone.js init. Until then audioOn stays false, so audible() is false. */
-  ensureAudio() {}
-  noteStart(_midi: number, _vel: number, _inst: string) {}
-  noteEnd(_midi: number, _inst: string) {}
-  drumSound(_d: R.DrumKey, _vel: number) {}
-  hitSound() {}
-  /** Pending (master transport): starts the looping master clock. */
-  startMaster(_start: number, _bpm?: number) {}
-  clockStep() {}
-  togglePlay = () => {};
-  primary = () => {};
-  stop = () => {};
-  reset = () => {};
-  /** Pending (recording/playback). */
-  recEvent(_r: R.EventInput | Omit<R.EventInput, 't'>, _at: number) {}
-  armRecord(_inst: R.InstKey) {}
   /** Pending (focus modes: Feel this loop, Tactile memory). */
   closeFocus = () => {};
   feelPlay = () => {};

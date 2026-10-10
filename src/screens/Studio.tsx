@@ -1,7 +1,9 @@
 import { useSyncExternalStore, type RefObject } from 'react';
 import { INSTR, type InstKey } from '../resonance/engine';
 import type { AppState } from '../resonance/appState';
+import { availableInstruments } from '../resonance/appState';
 import { HitDots } from '../ui/Dots';
+import { StudioDock, StudioTransport } from './StudioTransport';
 import type { ScreenProps } from './types';
 import './Studio.css';
 
@@ -67,8 +69,7 @@ export function Studio({
   const u = useSyncExternalStore(ui.subscribe, ui.get);
   const tr = st.transport;
   const busy = tr === 'countin' || tr === 'recording';
-  // Pending (recording): perf.layers.length.
-  const nL = 0;
+  const nL = st.layers.length;
   const hasLoop = nL > 0;
   const mob = st.vw < 700;
   const camHit = st.cam === 'live' && st.track === 'on';
@@ -119,6 +120,7 @@ export function Studio({
     };
   }
   const guideOn = !!guide && !st.focus && !st.pick;
+  const pickOn = st.pick && !busy && !st.focus;
   const eyeC = tr === 'countin' ? '#f2bd72' : '#7fe0ec';
 
   const camDot =
@@ -392,6 +394,38 @@ export function Studio({
         </div>
       )}
 
+      {pickOn && (
+        <div className="studio-pick-wrap">
+          <div data-avoid="1" role="dialog" aria-label="Add a layer" className="studio-pick">
+            <div className="studio-pick-head">
+              <span className="studio-pick-title">Add a layer</span>
+              <button onClick={() => setState({ pick: false })} className="studio-pick-cancel">
+                Cancel
+              </button>
+            </div>
+            <div className="studio-pick-grid">
+              {availableInstruments(st.layers).map((k, i) => (
+                <button
+                  key={k}
+                  onClick={() => ctrl.current?.armRecord(k)}
+                  className="studio-pick-item hv-cyan"
+                >
+                  <span className="studio-pick-rule" />
+                  <span className="studio-pick-name-row">
+                    <span className="studio-pick-name serif">{INSTR[k].name}</span>
+                    <span className="studio-pick-num mono">{i + 1}</span>
+                  </span>
+                  <span className="studio-pick-desc">{INSTR[k].desc}</span>
+                </button>
+              ))}
+            </div>
+            <span className="studio-pick-note">
+              Your loop keeps playing. One bar count-in, then four bars.
+            </span>
+          </div>
+        </div>
+      )}
+
       {(!!st.bpm || hasLoop) && lpMode !== 'none' && (lpMode === 'inline' || st.loopPop) && (
         <div
           data-avoid="soft"
@@ -404,7 +438,54 @@ export function Studio({
               {st.bpm ? st.bpm + ' BPM · 4 bars' : '4 bars'}
             </span>
           </div>
-          {/* Pending (recording): one row per recorded layer with mute / delete. */}
+          {st.layers.map((l, i) => {
+            const active = !!u.act[l.id] && !l.muted;
+            const name = INSTR[l.inst].name;
+            return (
+              <div key={l.id} className="studio-layer-row">
+                <span className="studio-loop-num mono">{String(i + 1).padStart(2, '0')}</span>
+                <span
+                  className="studio-loop-name"
+                  style={{ color: l.muted ? 'rgba(236,230,216,.4)' : '#ece6d8' }}
+                >
+                  {name}
+                </span>
+                <span
+                  className="studio-layer-dot"
+                  style={{
+                    borderColor: l.muted ? 'rgba(236,230,216,.3)' : '#7fe0ec',
+                    background: l.muted
+                      ? 'transparent'
+                      : active
+                        ? '#7fe0ec'
+                        : 'rgba(127,224,236,.3)',
+                    boxShadow: active ? '0 0 8px rgba(127,224,236,.9)' : 'none',
+                  }}
+                />
+                <button
+                  onClick={() => ctrl.current?.muteLayer(l.id)}
+                  aria-pressed={l.muted}
+                  disabled={busy}
+                  className="studio-layer-mute hv-ink"
+                  style={{
+                    color: l.muted ? '#7fe0ec' : 'rgba(236,230,216,.6)',
+                    opacity: busy ? 0.35 : 1,
+                  }}
+                >
+                  {l.muted ? 'Unmute' : 'Mute'}
+                </button>
+                <button
+                  onClick={() => ctrl.current?.deleteLayer(l.id)}
+                  disabled={busy}
+                  aria-label={'Delete ' + name}
+                  className="studio-layer-del hv-amber"
+                  style={{ opacity: busy ? 0.35 : 1 }}
+                >
+                  ×
+                </button>
+              </div>
+            );
+          })}
           {pend && (
             <div className="studio-loop-row">
               <span className="studio-loop-num mono">{pend.num}</span>
@@ -524,10 +605,11 @@ export function Studio({
           </div>
           {/* Pending (haptics): tactile module — wristband canvas, Feel modes. */}
         </div>
-        {/* Pending (transport + score): state readout, beats, Record / Play / Click / Loop / Reset,
-            playback modes, tactile score.
-            Pending (mobile): performance dock, tactile sheet, layers sheet. */}
+        <StudioTransport st={st} setState={setState} ctrl={ctrl} u={u} />
       </div>
+
+      {/* Pending (mobile): tactile sheet, layers sheet. */}
+      {mob && <StudioDock st={st} setState={setState} ctrl={ctrl} u={u} />}
     </div>
   );
 }
