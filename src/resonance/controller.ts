@@ -14,6 +14,7 @@ import { AudioEngine, type TriggerMeta } from './audioEngine';
 import { BAR_STEPS, LOOP_STEPS, MasterTransport } from './masterTransport';
 import { drawWrist } from './tactileView';
 import { Notation } from './notation';
+import { HandTracker, type Hands } from './handTracker';
 
 /** How early (in sixteenths) a hit may land and still count as the next downbeat (v7 value). */
 const REC_EARLY = 0.6;
@@ -23,6 +24,19 @@ const REC_EARLY = 0.6;
  * hit — so only the click is recorded.
  */
 const FLICK_CLICK_MERGE_MS = 200;
+
+/** Camera pinch hysteresis (thumb–index distance / hand size): start below, end above (v7). */
+const PINCH_ON = 0.32;
+const PINCH_OFF = 0.5;
+/**
+ * Fast-tap re-arm: a reopening (or re-closing) this large, relative to the closest (widest)
+ * point, ends (starts) a pinch even inside v7's thresholds. Real-hand trace: closed ≈ 0.12,
+ * fast-tap reopenings 0.26–0.45, held-pinch wobble ≤ 0.12.
+ */
+const PINCH_DELTA = 0.14;
+
+/** Camera flick: downward palm speed in frame-heights per second (v7). */
+const FLICK_SPEED = 2.2;
 
 /** A recorded event before it is placed on the loop (time and duration are derived on capture). */
 type RecInput = Omit<RawNote, 't' | 'dur'> & { dur?: number };
@@ -49,6 +63,11 @@ export interface ControllerHost {
   canvasRef: { current: HTMLCanvasElement | null };
   stageRef: { current: HTMLDivElement | null };
   tactile: TactileRefs;
+  /** Camera preview elements (optional UI; tracking does not depend on them). */
+  cam: {
+    video: { current: HTMLVideoElement | null };
+    overlay: { current: HTMLCanvasElement | null };
+  };
 }
 
 /** DOM the controller updates every frame (tactile module, score playhead and marks). */
@@ -99,6 +118,17 @@ export class ResonanceController {
   private avTimer = 0;
   private fmT = 0;
   private lastFlick = 0;
+  /** Camera + MediaPipe (imperative; landmarks never reach React). */
+  private tracker: HandTracker;
+  /** Previous palm height for camera flick velocity. */
+  private prevCy: { y: number; t: number } | null = null;
+  private camNoticeT = 0;
+  /** Closest thumb–index distance during the current camera pinch. */
+  private pinchLo = Infinity;
+  /** Widest thumb–index distance since the last camera pinch ended. */
+  private pinchHi = Infinity;
+  /** Dev builds only: per-detection pinch distance and pinch on/off, for tuning with real hands. */
+  pinchLog: { t: number; pd: number; pinch: boolean; ev: string }[] = [];
   /** The most recent cursor flick and the event it recorded, if any. */
   private cursorFlick: { wall: number; ev: RawNote | null } | null = null;
   private lp: { y: number; t: number } | null = null;
@@ -137,6 +167,10 @@ export class ResonanceController {
     this.sim = createSim(screen, reduced);
     this.field = new ParticleField(this.sim);
     this.notation = new Notation(this.sim);
+    this.tracker = new HandTracker({
+      onCamera: this.onCamera,
+      onTracking: (track) => this.setState({ track }),
+    });
     if (host.props.notation) {
       this.field.overlay = (ctx, t) => this.notation.draw(ctx, t);
     }
@@ -186,7 +220,8 @@ export class ResonanceController {
     window.removeEventListener('keydown', this.onKey);
     window.removeEventListener('keyup', this.onKeyUp);
     window.removeEventListener('pointerup', this.onUp);
-    // Pending (camera): stop the media stream and close the hand tracker.
+    clearTimeout(this.camNoticeT);
+    this.tracker.dispose();
     this.hap.hw.disconnect();
     this.transport.dispose();
     this.audio.dispose();
@@ -220,6 +255,8 @@ export class ResonanceController {
     if (!ps || ps.screen !== st.screen || ps.step !== st.step || ps.focus !== st.focus) {
       setTimeout(this.measureAvoid, 60);
     }
+    // The preview <video> mounts / remounts with the preview toggle; give it the stream.
+    this.tracker.attachPreview(this.host.cam.video.current);
   }
 
   // ---- tonal base (fixed)
@@ -652,6 +689,7 @@ export class ResonanceController {
           showChar: false,
           showBand: false,
           pick: false,
+          loopPop: false,
         });
       }
       return;
@@ -856,7 +894,9 @@ export class ResonanceController {
 
   // Flick = musical hit: big wave, both motors, accent sound.
   // Recorded into the loop like any other event.
-  flick(x: number, y: number, fromCursor = false) {
+  // `fromMotion`: the flick came from moving the hand (cursor or camera), so a click / pinch
+  // immediately after it may be the same gesture (see absorbCursorFlick).
+  flick(x: number, y: number, fromMotion = false) {
     const s = this.sim;
     if (s.focus) {
       return;
@@ -893,7 +933,7 @@ export class ResonanceController {
       { layer: 'hit', dur: 0.1, slot: -1, vel: 1, art: 'staccato', accent: true, gesture: 'flick' },
       this.transport.nowStep(),
     );
-    this.cursorFlick = fromCursor
+    this.cursorFlick = fromMotion
       ? {
           wall: performance.now(),
           ev: s.recRaw.length > before ? s.recRaw[s.recRaw.length - 1] : null,
@@ -902,8 +942,9 @@ export class ResonanceController {
   }
 
   /**
-   * A click right after a cursor flick is one gesture (moving into a zone, then hitting), not two
-   * hits. The click is the intended hit, so the flick's recorded event is withdrawn.
+   * A click / pinch right after a motion flick (cursor or camera) is one gesture — moving into a
+   * zone, then hitting — not two hits. The click / pinch is the intended hit, so the flick's
+   * recorded event is withdrawn.
    */
   private absorbCursorFlick() {
     const f = this.cursorFlick;
@@ -1967,6 +2008,141 @@ export class ResonanceController {
   /** Pending (focus modes: Feel this loop, Tactile memory). */
   closeFocus = () => {};
   feelPlay = () => {};
-  /** Pending (camera + MediaPipe hand tracking). */
-  detect() {}
+
+  // ---- camera + hand tracking (v7)
+
+  /** Camera chip / Retry / "Enter the studio": ask for the camera and start tracking. */
+  requestCamera = () => {
+    void this.tracker.requestCamera();
+  };
+
+  /** Demo user switching to the camera (v7 useCamera). */
+  useCamera = () => {
+    this.setState({ mode: 'live', cam: 'pending', showPreview: true, camNotice: false });
+    this.requestCamera();
+  };
+
+  private onCamera = (state: 'live' | 'unavailable', blocked: boolean) => {
+    if (state === 'live') {
+      this.setState({ cam: 'live' });
+      return;
+    }
+    // Cursor control simply continues; the notice offers Retry.
+    clearTimeout(this.camNoticeT);
+    this.setState({ cam: 'unavailable', camBlocked: blocked, camNotice: true });
+    this.camNoticeT = window.setTimeout(() => this.setState({ camNotice: false }), 7000);
+  };
+
+  /** Runs every animation frame; the tracker itself throttles inference to ~30 fps. */
+  detect() {
+    const all = this.tracker.poll();
+    if (!all) {
+      return;
+    }
+    this.tracker.drawHands(this.host.cam.overlay.current, all);
+    this.applyHands(all);
+  }
+
+  /**
+   * v7 hand mapping. Drives the same simulated hand the cursor drives, and the same
+   * pinchStart / pinchEnd / flick calls, so everything downstream is shared.
+   */
+  applyHands(all: Hands) {
+    const s = this.sim;
+    const h = s.hand;
+    const now = performance.now();
+    const lm = all[0];
+
+    // Two hands: spread between palms opens up the sound; eases back to neutral otherwise.
+    if (all.length > 1) {
+      const a = all[0][9];
+      const b = all[1][9];
+      const target = Math.min(1, Math.max(0, (Math.hypot(a.x - b.x, a.y - b.y) - 0.15) / 0.5));
+      s.spread += (target - s.spread) * 0.3;
+    } else {
+      s.spread *= 0.9;
+    }
+
+    // Hand lost: release a camera pinch so notes never hang.
+    if (!lm) {
+      if (h.camPinch) {
+        h.camPinch = false;
+        this.pinchEnd();
+      }
+      this.prevCy = null;
+      this.pinchHi = Infinity; // a hand that reappears already pinched pinches at once
+      return;
+    }
+
+    // Camera takes priority over the cursor while a hand is in view (see onMove).
+    s.handSeen = s.t;
+
+    // Palm centre → mirrored position; height maps into the same six slots as the cursor.
+    let cx = 0;
+    let cy = 0;
+    for (const i of [0, 5, 9, 13, 17]) {
+      cx += lm[i].x;
+      cy += lm[i].y;
+    }
+    cx /= 5;
+    cy /= 5;
+    const nx = Math.max(0, Math.min(1, (1 - cx - 0.12) / 0.76));
+    const ny = Math.max(0, Math.min(1, (cy - 0.1) / 0.7));
+    h.tx = nx * s.W;
+    h.ty = s.band ? s.band[0] + ny * (s.band[1] - s.band[0]) : ny * s.H;
+    h.lastMove = s.t;
+    s.mouseT = s.t;
+    // The tutorial's demo hand may be mid-pinch when a real hand appears: end that pinch (as the
+    // cursor path does), otherwise it stays held and blocks every camera pinch.
+    if (h.ghostPinch) {
+      h.ghostPinch = false;
+      this.pinchEnd();
+    }
+    const size = Math.hypot(lm[0].x - lm[9].x, lm[0].y - lm[9].y) || 0.1;
+    s.handSize = size;
+    if (s.focus) {
+      return;
+    }
+
+    // Pinch: thumb tip to index tip, relative to hand size, with hysteresis.
+    // v7: start below PINCH_ON, end above PINCH_OFF. Fast tapping rarely reopens that far, so a
+    // pinch also ends when the fingers reopen PINCH_DELTA from their closest point, and the next
+    // one starts once they close PINCH_DELTA from their widest point (tuned on real-hand data).
+    const pd = Math.hypot(lm[4].x - lm[8].x, lm[4].y - lm[8].y) / size;
+    let pinchEvent = '';
+    if (h.pinch && h.camPinch) {
+      this.pinchLo = Math.min(this.pinchLo, pd);
+      if (pd > PINCH_OFF || pd >= this.pinchLo + PINCH_DELTA) {
+        h.camPinch = false;
+        this.pinchEnd();
+        this.pinchHi = pd;
+        pinchEvent = 'off';
+      }
+    } else if (!h.pinch) {
+      this.pinchHi = Math.max(this.pinchHi, pd);
+      if (pd < PINCH_ON && pd <= this.pinchHi - PINCH_DELTA) {
+        h.camPinch = true;
+        this.pinchStart();
+        this.pinchLo = pd;
+        pinchEvent = 'on';
+      }
+    }
+    if (import.meta.env.DEV) {
+      this.pinchLog.push({ t: now, pd, pinch: h.pinch, ev: pinchEvent });
+      if (this.pinchLog.length > 3000) {
+        this.pinchLog.splice(0, 1000);
+      }
+    }
+
+    // Flick: a fast downward palm movement (not while pinching).
+    const prev = this.prevCy;
+    this.prevCy = { y: cy, t: now };
+    if (prev && now - prev.t < 150 && !h.pinch) {
+      const vel = (cy - prev.y) / ((now - prev.t) / 1000);
+      if (vel > FLICK_SPEED && now - (this.lastFlick || 0) > 500) {
+        this.lastFlick = now;
+        this.flick(h.x, h.y, true);
+      }
+    }
+  }
 }
