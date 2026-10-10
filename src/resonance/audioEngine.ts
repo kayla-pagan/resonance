@@ -15,7 +15,6 @@ interface Bus {
 interface Players {
   kick: Tone.MembraneSynth;
   hat: Tone.NoiseSynth;
-  hit: Tone.NoiseSynth;
   bass: Tone.MonoSynth;
   snare: Tone.NoiseSynth;
   keys: Tone.PolySynth<Tone.AMSynth>;
@@ -26,7 +25,7 @@ const hz = (m: number) => 440 * Math.pow(2, (m - 69) / 12);
 
 /** Where a trigger came from (dev diagnostics). */
 export interface TriggerMeta {
-  source?: 'live' | 'playback' | 'metronome' | 'flick-live' | 'flick-playback';
+  source?: 'live' | 'playback' | 'metronome';
   id?: string;
   step?: number;
   loopTime?: number;
@@ -54,10 +53,9 @@ export interface AudioTrigger extends TriggerMeta {
  * envelope, or force the live hit to wait behind it.
  *
  * Tone rejects a voice start at or before that voice's previous start. Within one voice set,
- * two *distinct* events at the same instant (e.g. a flick accent on a kick) are separated by
- * 2 ms; an exact repeat of the same drum at the same instant is the same hit and is dropped.
- *
- * Keys and Lead voices are not part of this milestone.
+ * two *distinct* events at the same instant (e.g. two bass notes quantized onto one 8th) are
+ * separated by 2 ms; an exact repeat of the same drum at the same instant is the same hit and
+ * is dropped.
  */
 export class AudioEngine {
   private bus: Bus | null = null;
@@ -174,19 +172,6 @@ export class AudioEngine {
         this.at('click', time, meta),
         accent ? 0.9 : 0.5,
       );
-    });
-  }
-
-  /** Flick accent. `time` omitted = live gesture. */
-  hit(time?: number, meta?: TriggerMeta) {
-    const p = time == null ? this.live : this.sched;
-    if (!p) {
-      return;
-    }
-    const set = time == null ? 'live' : 'sched';
-    this.safely('hit', () => {
-      p.kick.triggerAttackRelease('G0', '8n', this.at(set + ':kick', time, meta), 1);
-      p.hit.triggerAttackRelease('8n', this.at(set + ':hit', time, meta), 1);
     });
   }
 
@@ -312,15 +297,6 @@ export class AudioEngine {
     );
     hat.volume.value = -24;
 
-    const hitF = this.keep(new Tone.Filter(1800, 'bandpass').connect(rev));
-    const hit = this.keep(
-      new Tone.NoiseSynth({
-        noise: { type: 'pink' },
-        envelope: { attack: 0.002, decay: 0.35, sustain: 0 },
-      }).connect(hitF),
-    );
-    hit.volume.value = -8;
-
     const bass = this.keep(
       new Tone.MonoSynth({
         oscillator: { type: 'triangle' },
@@ -346,7 +322,7 @@ export class AudioEngine {
     );
     snare.volume.value = -10;
 
-    return { kick, hat, hit, bass, snare, keys, lead };
+    return { kick, hat, bass, snare, keys, lead };
   }
 
   private keep<T extends Tone.ToneAudioNode>(n: T) {

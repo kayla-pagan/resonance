@@ -18,6 +18,7 @@ export function transportView(st: AppState, u: Ui) {
   const tr = st.transport;
   const nL = st.layers.length;
   const mob = st.vw < 700;
+  const armed = tr === 'armed';
   const busy = tr === 'countin' || tr === 'recording';
   const running = tr === 'playing' || tr === 'found';
   const canPlay = !!st.bpm && (running || tr === 'paused');
@@ -47,6 +48,14 @@ export function transportView(st: AppState, u: Ui) {
       radius: '50%',
       bg: '#7fe0ec',
       border: 'none',
+      clip: 'none',
+    },
+    armed: {
+      label: 'Armed',
+      col: '#f2bd72',
+      radius: '50%',
+      bg: 'transparent',
+      border: '1.5px dashed #f2bd72',
       clip: 'none',
     },
     countin: {
@@ -101,11 +110,14 @@ export function transportView(st: AppState, u: Ui) {
           : st.pulse.n + ' of 8 hits'
         : tr === 'found'
           ? (mob ? st.bpm + ' BPM · ' : '') + 'Tempo locked'
-          : tr === 'countin'
-            ? recName + (u.count ? ' in ' + u.count : ' next bar')
-            : tr === 'recording'
-              ? 'Bar ' + (u.recBar || 1) + ' / 4'
-              : st.bpm + ' BPM · ' + layerCount;
+          : armed
+            ? recName +
+              (u.waitBars > 1 ? ' · count-in in ' + u.waitBars + ' bars' : ' · count-in next bar')
+            : tr === 'countin'
+              ? recName + (u.count ? ' in ' + u.count : ' next bar')
+              : tr === 'recording'
+                ? 'Bar ' + (u.recBar || 1) + ' / 4'
+                : st.bpm + ' BPM · ' + layerCount;
   const status: StatusLook = { ...(looks[key] || looks.ready), bar };
 
   // Record button: find pulse → record drums → add a layer → complete (all four layers).
@@ -115,13 +127,15 @@ export function transportView(st: AppState, u: Ui) {
       ? 'Find my pulse'
       : tr === 'finding'
         ? 'Cancel'
-        : busy
-          ? 'Stop'
-          : !nL
-            ? 'Record drums'
-            : complete
-              ? 'Complete'
-              : '+ Add layer';
+        : armed
+          ? 'Cancel'
+          : busy
+            ? 'Stop'
+            : !nL
+              ? 'Record drums'
+              : complete
+                ? 'Complete'
+                : '+ Add layer';
   const primDis = !!st.focus || (complete && tr !== 'ready' && tr !== 'finding');
 
   return {
@@ -135,7 +149,7 @@ export function transportView(st: AppState, u: Ui) {
     available,
     primText,
     primDis,
-    beatsOn: !!st.bpm && (running || busy),
+    beatsOn: !!st.bpm && (running || armed || busy),
     resetDis: tr === 'ready' && !nL,
   };
 }

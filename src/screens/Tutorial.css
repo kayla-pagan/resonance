@@ -100,17 +100,80 @@
   border-radius: 1px;
   transition: background 0.15s;
 }
-.tut-hap-ring {
-  position: absolute;
-  inset: 14px;
-  border-radius: 50%;
-  border: 1px solid var(--amber);
+/* Two motors: first half of the cycle they pulse the beat together (recording), second half
+   they alternate as Drums (left) and Bass (right) (playback). */
+.tut-motors {
+  display: flex;
+  gap: 14px;
 }
-.tut-hap-dot {
-  width: 10px;
-  height: 10px;
+.tut-motor {
+  width: 12px;
+  height: 12px;
   border-radius: 50%;
-  background: var(--amber);
+  opacity: 0.25;
+  background: var(--ink);
+  animation: tut-motor-l 4s infinite;
+}
+.tut-motor--r {
+  background: var(--cyan);
+  animation-name: tut-motor-r;
+}
+@keyframes tut-motor-l {
+  0%,
+  12.5%,
+  25%,
+  37.5%,
+  50%,
+  75% {
+    opacity: 1;
+    transform: scale(1.35);
+  }
+  6%,
+  18.5%,
+  31%,
+  43.5%,
+  56%,
+  62.5%,
+  81%,
+  100% {
+    opacity: 0.25;
+    transform: scale(1);
+  }
+}
+@keyframes tut-motor-r {
+  0%,
+  12.5%,
+  25%,
+  37.5%,
+  62.5%,
+  87.5% {
+    opacity: 1;
+    transform: scale(1.35);
+  }
+  6%,
+  18.5%,
+  31%,
+  43.5%,
+  50%,
+  68.5%,
+  75%,
+  93.5%,
+  100% {
+    opacity: 0.25;
+    transform: scale(1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tut-motor {
+    animation: none;
+    opacity: 0.8;
+  }
+}
+.tut-note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: rgba(236, 230, 216, 0.42);
 }
 
 .tut-text {

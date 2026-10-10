@@ -18,8 +18,9 @@ export interface WristOptions {
 }
 
 /**
- * Simulated wristband: two motors on the front of the band, Pulse (rhythm) on the left and
- * Expression on the right. Ported from v7 drawWrist; drawn every frame by the controller.
+ * Simulated wristband: two motors on the front of the band, Drums (channel `rhythm`) on the left
+ * and Bass (channel `expression`) on the right; both carry the beat while recording.
+ * Ported from v7 drawWrist; drawn every frame by the controller.
  */
 export function drawWrist(cv: HTMLCanvasElement | null, o: WristOptions) {
   if (!cv) {

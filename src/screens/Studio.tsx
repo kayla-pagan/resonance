@@ -81,7 +81,8 @@ export function Studio({
   const u = useSyncExternalStore(ui.subscribe, ui.get);
   const loopRef = useRef<HTMLDivElement>(null);
   const tr = st.transport;
-  const busy = tr === 'countin' || tr === 'recording';
+  // A take is in progress, including the armed wait before its count-in: layers are locked.
+  const busy = tr === 'armed' || tr === 'countin' || tr === 'recording';
   const nL = st.layers.length;
   const hasLoop = nL > 0;
   const mob = st.vw < 700;
@@ -110,7 +111,7 @@ export function Studio({
           eyebrow: 'Finding your pulse',
           title: 'Move or trigger 4–8 steady drum hits.',
           sub: camHit
-            ? 'Pinch or flick in a steady rhythm.'
+            ? 'Pinch in a steady rhythm.'
             : 'Click the field in a steady rhythm, or press J.',
           dots: true,
           dotsLabel: st.pulse.n + ' of 8 hits',
@@ -122,6 +123,16 @@ export function Studio({
       sub: 'Locked for the whole loop. Record four bars of drums next.',
       retry: true,
       retryText: 'Find again',
+    };
+  } else if (tr === 'armed') {
+    // Waiting for a bar line that allows a full count-in into loop bar 1; nothing is recording.
+    guide = {
+      eyebrow: 'Armed · ' + recName,
+      title: 'Every take starts at bar 1.',
+      sub:
+        u.waitBars > 1
+          ? 'Your loop keeps playing. The count-in starts in ' + u.waitBars + ' bars.'
+          : 'The count-in starts on the next bar.',
     };
   } else if (tr === 'countin') {
     guide = {
@@ -175,19 +186,19 @@ export function Studio({
   const modeShort =
     inst === 'drums'
       ? camHit
-        ? 'Pinch or flick to hit. Height picks kick, snare or hat.'
+        ? 'Pinch to hit. Height picks kick, snare or hat.'
         : 'Your cursor is the hand. Click to hit; height picks kick, snare or hat.'
       : st.mode === 'demo' || st.cam !== 'live'
         ? st.cam === 'pending'
           ? 'Allow camera access to play with your hand.'
-          : 'Your cursor is the hand. Height sets the note, hold to pinch, flick down for an accent.'
+          : 'Your cursor is the hand. Height sets the note, hold to pinch.'
         : st.track === 'loading'
           ? 'Loading hand tracking. Your cursor works meanwhile.'
           : st.track === 'on'
             ? st.handIn
-              ? 'Height sets the note. Pinch to play. Flick down for an accent.'
+              ? 'Height sets the note. Pinch to play.'
               : 'Show your hand to the camera.'
-            : 'Your cursor is the hand. Hold to pinch, flick down for an accent.';
+            : 'Your cursor is the hand. Hold to pinch.';
 
   // Loop panel: inline on tall desktop viewports, a popover on short ones,
   // hidden on mobile (it lives in a sheet there).
@@ -222,7 +233,12 @@ export function Studio({
         name: recName,
         col: '#f2bd72',
         dot: tr === 'recording' ? '#f2bd72' : 'transparent',
-        text: tr === 'recording' ? 'Bar ' + (u.recBar || 1) + ' / 4' : 'Count in',
+        text:
+          tr === 'recording'
+            ? 'Bar ' + (u.recBar || 1) + ' / 4'
+            : tr === 'armed'
+              ? 'Armed'
+              : 'Count in',
       }
     : !nL && st.bpm
       ? { num: '01', name: 'Drums', col: 'rgba(236,230,216,.55)', dot: 'transparent', text: 'Next' }
@@ -394,8 +410,7 @@ export function Studio({
             </span>
           </button>
           <p className="studio-pop-note">
-            Calmer sand and smaller waves. Every event still appears on the wristband and the
-            tactile score.
+            Calmer sand and smaller waves. The score, notation and wristband are unaffected.
           </p>
         </div>
       )}
@@ -416,8 +431,6 @@ export function Studio({
           <span>Move the hand</span>
           <span className="studio-key mono">J</span>
           <span>Pinch or hit (hold to sustain)</span>
-          <span className="studio-key mono">A</span>
-          <span>Accent</span>
           <span className="studio-key mono">F</span>
           <span>Next Feel mode</span>
           <span className="studio-key mono">M</span>

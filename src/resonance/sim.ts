@@ -10,6 +10,8 @@ export type Transport =
   | 'ready'
   | 'finding'
   | 'found'
+  /** A take is armed: the loop plays on until the next bar line that allows a full count-in. */
+  | 'armed'
   | 'countin'
   | 'recording'
   | 'playing'
@@ -104,6 +106,8 @@ export interface LiveNote {
   vel: number;
   slur: boolean;
   holdSent: boolean;
+  /** The held-note pulse actually reached the Bass motor (so its release must follow). */
+  holdFelt?: boolean;
   inst: string;
   done?: boolean;
 }
@@ -190,9 +194,7 @@ export interface Sim {
   // optional/late-bound fields the prototype adds on the fly
   handSeen?: number;
   bothT?: number;
-  flickT?: number;
   holdRipT?: number;
-  ghostFlicked?: boolean;
   prevBpm?: number | null;
   viaPulse?: boolean;
   // particle buffers (sized in initParticles)

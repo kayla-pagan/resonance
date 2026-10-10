@@ -179,6 +179,8 @@ export interface Ui {
   inst: string;
   count: number;
   recBar: number;
+  /** Armed take: loop bars still to play before the count-in bar begins. */
+  waitBars: number;
   act: Record<string, boolean>;
   energy: number;
   slot: number;
@@ -205,6 +207,7 @@ const INITIAL_UI: Ui = {
   inst: '',
   count: 0,
   recBar: 0,
+  waitBars: 0,
   act: {},
   slot: 2,
   name: '',

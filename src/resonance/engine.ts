@@ -1,8 +1,9 @@
-/* Resonance engine (two-channel hackathon build).
+/* Resonance engine (two-motor prototype).
    One MusicEvent feeds audio, particles, the score and the wristband.
-   Motor 1 = RHYTHM, shown as PULSE (beat, downbeat).
-   Motor 2 = EXPRESSION (notes, held notes, accents).
-   Flick = both.
+   Count-in / recording: both motors pulse the metronome together (see controller.metroHaptic).
+   Playback: motor 1 (left, internal channel 'rhythm') = Drums;
+             motor 2 (right, internal channel 'expression') = Bass.
+   Keys and Lead have no motor in this prototype: they are heard and shown in the notation.
 
    Ported from resonance-engine-v7.js. Logic is unchanged;
    the IIFE + window.Resonance global became ES module exports. */
@@ -16,7 +17,7 @@ export interface HapticCmd {
 }
 export type InstKey = 'drums' | 'bass' | 'keys' | 'lead';
 export type DrumKey = 'kick' | 'snare' | 'hat';
-export type Layer = 'rhythm' | 'bass' | 'chord' | 'melody' | 'note' | 'hit' | 'drum';
+export type Layer = 'rhythm' | 'bass' | 'chord' | 'melody' | 'note' | 'drum';
 
 export interface TonalBase {
   key: string;
@@ -135,7 +136,7 @@ export const TONE: TonalBase = {
 export const PRESETS: Record<string, TonalBase> = { base: TONE };
 export const ORDER: string[] = [];
 export const INSTR: Record<InstKey, { name: string; desc: string }> = {
-  drums: { name: 'Drums', desc: 'Height picks kick, snare or hat. Flick for a crash.' },
+  drums: { name: 'Drums', desc: 'Height picks kick, snare or hat. Move more to hit harder.' },
   bass: { name: 'Bass', desc: 'Low synth. Hand height sets the note; hold to sustain.' },
   keys: { name: 'Keys', desc: 'Warm two-note chords. Pinch to play, hold to ring.' },
   lead: { name: 'Lead', desc: 'Bright voice on top. Move more for stronger notes.' },
@@ -211,9 +212,7 @@ function makeEvent(o: EventInput, bpm: number): MusicEvent {
     duration: o.dur,
     articulation: o.art,
     accent: !!o.accent,
-    gesture:
-      o.gesture ||
-      (mel ? (o.art === 'legato' ? 'hold' : 'pinch') : o.layer === 'hit' ? 'flick' : 'beat'),
+    gesture: o.gesture || (mel ? (o.art === 'legato' ? 'hold' : 'pinch') : 'beat'),
     bar: Math.floor(b / 4) + 1,
     beat: Math.floor(b % 4) + 1,
     step: ((step % 16) + 16) % 16,
@@ -303,9 +302,6 @@ export function buildScore(loop: LoopDef, q: string): Score {
   const len = loop.len;
   const rec: EventInput[] = (loop.raw || []).map((n) => {
     const m = quantizeNote(n, q, bpm, len);
-    if (n.layer === 'hit') {
-      return Object.assign({}, m, { layer: 'hit' as const, accent: true, gesture: 'flick' });
-    }
     return Object.assign({ layer: 'melody' as Layer, degree: p.degrees[n.slot as number] }, m);
   });
   const ev = (loop.base || [])
@@ -328,14 +324,11 @@ export function buildScore(loop: LoopDef, q: string): Score {
   return { events: ev, len, bpm, bars: loop.bars || 4, preset: loop.preset };
 }
 
-/* ---- Tactile grammar (fixed) ----
-   BEAT      rhythm      short       .6  60 ms
-   DOWNBEAT  rhythm      stronger    .95 110 ms
-   NOTE      expression  short       70 ms, strength from movement
-   HELD NOTE expression  long        note length
-   ACCENT    expression  strong      1.0 140 ms
-   FLICK     both motors together    1.0 90 ms
-   Off-beat taps and bass are heard, not felt, so Motor 1 stays a clean pulse. */
+/* ---- Tactile grammar for musical events (playback) ----
+   KICK / SNARE  left motor ('rhythm')      strength from velocity; hats are heard, not felt
+   BASS NOTE     right motor ('expression') short note, or held for the note's length; accents strong
+   KEYS / LEAD   no motor in this two-motor prototype (audio + visual notation only)
+   The count-in / recording metronome (both motors) is built in controller.metroHaptic. */
 export function compile(ev: EventLike): HapticCmd[] {
   if (ev.layer === 'rhythm') {
     if ((ev.step as number) % 4 !== 0) {
@@ -344,12 +337,6 @@ export function compile(ev: EventLike): HapticCmd[] {
     return ev.step === 0
       ? [{ channel: 'rhythm', intensity: 0.95, duration: 110, type: 'downbeat' }]
       : [{ channel: 'rhythm', intensity: 0.6, duration: 60, type: 'beat' }];
-  }
-  if (ev.layer === 'hit') {
-    return [
-      { channel: 'rhythm', intensity: 1, duration: 90, type: 'hit' },
-      { channel: 'expression', intensity: 1, duration: 90, type: 'hit' },
-    ];
   }
   if (ev.layer === 'drum') {
     const dv = ev.velocity || 0.7;
@@ -360,13 +347,16 @@ export function compile(ev: EventLike): HapticCmd[] {
         : [];
   }
   if (ev.layer === 'note') {
+    // Only Bass has a motor; Keys and Lead are heard and seen, not felt.
+    if (ev.inst !== 'bass') {
+      return [];
+    }
     const nv = ev.velocity || 0.6;
-    const bass = ev.inst === 'bass';
     if (ev.articulation === 'legato') {
       return [
         {
           channel: 'expression',
-          intensity: ev.accent ? 1 : (bass ? 0.6 : 0.5) + 0.35 * nv,
+          intensity: ev.accent ? 1 : 0.6 + 0.35 * nv,
           duration: Math.round(clamp((ev.duration as number) * 1000, 220, 1400)),
           type: 'held',
         },
@@ -375,14 +365,7 @@ export function compile(ev: EventLike): HapticCmd[] {
     if (ev.accent) {
       return [{ channel: 'expression', intensity: 1, duration: 140, type: 'accent' }];
     }
-    return [
-      {
-        channel: 'expression',
-        intensity: (bass ? 0.55 : 0.45) + 0.4 * nv,
-        duration: bass ? 110 : 70,
-        type: 'note',
-      },
-    ];
+    return [{ channel: 'expression', intensity: 0.55 + 0.4 * nv, duration: 110, type: 'note' }];
   }
   if (ev.layer !== 'melody') {
     return [];
@@ -412,20 +395,20 @@ export function releaseCmd(ch?: Channel): HapticCmd {
 }
 export function describe(ev: EventLike) {
   if (ev.layer === 'rhythm') {
-    return ev.step === 0 ? 'Pulse · downbeat' : (ev.step as number) % 4 === 0 ? 'Pulse · beat' : '';
-  }
-  if (ev.layer === 'hit') {
-    return 'Pulse + Expression · flick';
+    return ev.step === 0
+      ? 'Both motors · downbeat'
+      : (ev.step as number) % 4 === 0
+        ? 'Both motors · beat'
+        : '';
   }
   if (ev.layer === 'drum') {
-    return ev.drum === 'hat' ? '' : 'Pulse · ' + ev.drum;
+    return ev.drum === 'hat' ? '' : 'Drums · ' + ev.drum;
   }
   if (ev.layer === 'note') {
-    return (
-      'Expression · ' +
-      (ev.inst ? ev.inst + ' ' : '') +
-      (ev.articulation === 'legato' ? 'held note' : ev.accent ? 'accent' : 'note')
-    );
+    if (ev.inst !== 'bass') {
+      return '';
+    }
+    return 'Bass · ' + (ev.articulation === 'legato' ? 'held note' : ev.accent ? 'accent' : 'note');
   }
   if (ev.layer !== 'melody') {
     return '';

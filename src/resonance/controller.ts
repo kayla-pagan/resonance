@@ -11,19 +11,13 @@ import {
   type UiStore,
 } from './appState';
 import { AudioEngine, type TriggerMeta } from './audioEngine';
-import { BAR_STEPS, LOOP_STEPS, MasterTransport } from './masterTransport';
+import { BAR_STEPS, LOOP_STEPS, MasterTransport, mod } from './masterTransport';
 import { drawWrist } from './tactileView';
 import { Notation } from './notation';
 import { HandTracker, type Hands } from './handTracker';
 
 /** How early (in sixteenths) a hit may land and still count as the next downbeat (v7 value). */
 const REC_EARLY = 0.6;
-
-/**
- * A cursor flick followed this quickly by a click is one gesture — travel into a zone, then the
- * hit — so only the click is recorded.
- */
-const FLICK_CLICK_MERGE_MS = 200;
 
 /** Camera pinch hysteresis (thumb–index distance / hand size): start below, end above (v7). */
 const PINCH_ON = 0.32;
@@ -34,9 +28,6 @@ const PINCH_OFF = 0.5;
  * fast-tap reopenings 0.26–0.45, held-pinch wobble ≤ 0.12.
  */
 const PINCH_DELTA = 0.14;
-
-/** Camera flick: downward palm speed in frame-heights per second (v7). */
-const FLICK_SPEED = 2.2;
 
 /** A recorded event before it is placed on the loop (time and duration are derived on capture). */
 type RecInput = Omit<RawNote, 't' | 'dur'> & { dur?: number };
@@ -117,11 +108,8 @@ export class ResonanceController {
   private uiTimer = 0;
   private avTimer = 0;
   private fmT = 0;
-  private lastFlick = 0;
   /** Camera + MediaPipe (imperative; landmarks never reach React). */
   private tracker: HandTracker;
-  /** Previous palm height for camera flick velocity. */
-  private prevCy: { y: number; t: number } | null = null;
   private camNoticeT = 0;
   /** Closest thumb–index distance during the current camera pinch. */
   private pinchLo = Infinity;
@@ -129,10 +117,6 @@ export class ResonanceController {
   private pinchHi = Infinity;
   /** Dev builds only: per-detection pinch distance and pinch on/off, for tuning with real hands. */
   pinchLog: { t: number; pd: number; pinch: boolean; ev: string }[] = [];
-  /** The most recent cursor flick and the event it recorded, if any. */
-  private cursorFlick: { wall: number; ev: RawNote | null } | null = null;
-  private lp: { y: number; t: number } | null = null;
-  private td: { y: number; t: number } | null = null;
   private ps: {
     reduced: boolean;
     screen: string;
@@ -142,10 +126,11 @@ export class ResonanceController {
     muted: boolean;
   } | null = null;
 
+  /** Feel modes. Internally `rhythm` is the Drums motor and `expression` the Bass motor. */
   FEELS: [Feel, string][] = [
-    ['full', 'Full'],
-    ['rhythm', 'Pulse'],
-    ['expression', 'Expression'],
+    ['full', 'Both'],
+    ['rhythm', 'Drums'],
+    ['expression', 'Bass'],
     ['off', 'Off'],
   ];
   QUANTS: [AppState['quant'], string][] = [
@@ -154,9 +139,9 @@ export class ResonanceController {
     ['balanced', 'Balanced'],
   ];
   FEEL_MSG: Record<Feel, string> = {
-    full: 'Feel both channels.',
-    rhythm: 'Feel only the beat.',
-    expression: 'Feel notes and accents.',
+    full: 'Feel drums and bass.',
+    rhythm: 'Feel only the drums.',
+    expression: 'Feel only the bass.',
     off: 'Touch is off.',
   };
 
@@ -272,21 +257,36 @@ export class ResonanceController {
     return f === 'full' || f === ch;
   }
 
-  sendHaptics(cmds: HapticCmd[], cue?: string) {
+  /** Count-in or recording: the wristband is the metronome and carries nothing else. */
+  keepingTime() {
+    const tr = this.sim.transport;
+    return tr === 'countin' || tr === 'recording';
+  }
+
+  /**
+   * Returns whether any command reached the motors. While keeping time, only the metronome
+   * (`metronome: true`) gets through: no drum, bass or held-note pulses during count-in / takes.
+   */
+  sendHaptics(cmds: HapticCmd[], cue?: string, metronome = false): boolean {
     const s = this.sim;
     if (s.noHaptic || !cmds || !cmds.length) {
-      return;
+      return false;
+    }
+    if (!metronome && this.keepingTime()) {
+      return false;
     }
     const out = cmds.filter((c) => this.chanAllowed(c.channel));
     if (!out.length) {
-      return;
+      return false;
     }
     this.hap.send(out);
     const lf = s.lastFire;
     out.forEach((c) => {
       lf[c.channel] = s.t;
     });
-    if (Math.abs(lf.rhythm - lf.expression) < 0.06 && s.t - (s.bothT || -9) > 0.2) {
+    // Drums and bass landing together give a "both motors" swell; the two-motor metronome
+    // fires both on every beat, so it is left out.
+    if (!metronome && Math.abs(lf.rhythm - lf.expression) < 0.06 && s.t - (s.bothT || -9) > 0.2) {
       s.bothT = s.t;
       s.boost = Math.min(0.6, s.boost + 0.14);
       s.ripples.push({
@@ -311,6 +311,7 @@ export class ResonanceController {
       s.lastCue = cue;
       s.cueT = s.t;
     }
+    return true;
   }
 
   melodyVisual(
@@ -433,24 +434,12 @@ export class ResonanceController {
       h.ghostPinch = false;
       this.pinchEnd();
     }
-    const now = performance.now();
-    const lp = this.lp;
-    this.lp = { y: e.clientY, t: now };
-    if (lp && !h.pinch && !s.focus && (s.screen === 'studio' || s.screen === 'tutorial')) {
-      const dt = now - lp.t;
-      const dy = e.clientY - lp.y;
-      if (dt > 0 && dt < 60 && dy > 18 && dy / dt > 2.6 && now - (this.lastFlick || 0) > 450) {
-        this.lastFlick = now;
-        this.flick(h.tx, h.ty, true);
-      }
-    }
   };
 
   onDown = (e: PointerLike) => {
     if (e.button !== 0) {
       return;
     }
-    this.td = e.pointerType === 'touch' ? { y: e.clientY, t: performance.now() } : null;
     const st = this.state;
     if (st.showA11y || st.showChar || st.showKeys || st.showBand) {
       this.setState({ showA11y: false, showChar: false, showKeys: false, showBand: false });
@@ -462,26 +451,7 @@ export class ResonanceController {
     this.pinchStart();
   };
 
-  // Touch fallback: a fast vertical swipe ends as an accent, same event as a camera flick.
-  onUp = (e: PointerEvent) => {
-    const td = this.td;
-    this.td = null;
-    if (td && e && (this.state.screen === 'studio' || this.state.screen === 'tutorial')) {
-      const dt = performance.now() - td.t;
-      const dy = e.clientY - td.y;
-      if (
-        dt < 320 &&
-        Math.abs(dy) > 70 &&
-        Math.abs(dy) / dt > 0.6 &&
-        performance.now() - (this.lastFlick || 0) > 450
-      ) {
-        this.lastFlick = performance.now();
-        const h0 = this.sim.hand;
-        this.pinchEnd();
-        this.flick(h0.x, h0.y);
-        return;
-      }
-    }
+  onUp = () => {
     const h = this.sim.hand;
     if (h && h.pinch && !h.ghostPinch && !h.camPinch) {
       this.pinchEnd();
@@ -496,7 +466,6 @@ export class ResonanceController {
     }
     h.pinch = true;
     h.lastMove = s.t;
-    this.absorbCursorFlick();
     if (this.liveInst() === 'drums') {
       this.drumHit();
     } else {
@@ -557,17 +526,17 @@ export class ResonanceController {
     if (this.audible()) {
       this.noteStart(midi, vel, inst);
     }
+    // Live notes follow the playback grammar: Bass on its motor, Keys / Lead not felt.
     if (s.screen === 'studio') {
-      this.sendHaptics(
-        R.compile({
-          layer: 'melody',
-          velocity: vel,
-          accent: acc,
-          articulation: 'normal',
-          duration: 0.1,
-        }),
-        acc ? 'Expression · accent' : 'Expression · note',
-      );
+      const ev = {
+        layer: 'note' as const,
+        inst,
+        velocity: vel,
+        accent: acc,
+        articulation: 'normal' as const,
+        duration: 0.1,
+      };
+      this.sendHaptics(R.compile(ev), R.describe(ev));
     }
   }
 
@@ -578,7 +547,7 @@ export class ResonanceController {
       return;
     }
     const dur = s.t - n.start;
-    if (n.holdSent) {
+    if (n.holdFelt) {
       this.hap.send([R.releaseCmd('expression')]);
     }
     this.noteEnd(n.midi, n.inst);
@@ -651,7 +620,7 @@ export class ResonanceController {
       finding
         ? [{ channel: 'rhythm', intensity: 0.85, duration: 80, type: 'drum' }]
         : R.compile({ layer: 'drum', drum, velocity: vel }),
-      finding ? 'Pulse · hit' : R.describe({ layer: 'drum', drum }),
+      finding ? 'Drums · hit' : R.describe({ layer: 'drum', drum }),
     );
     if (finding) {
       this.pulseHit();
@@ -753,8 +722,6 @@ export class ResonanceController {
     } else if (k === 'j' || (k === 'enter' && !onBtn)) {
       h.ghostPinch = false;
       this.pinchStart();
-    } else if (k === 'a') {
-      this.flick(h.x, h.y);
     }
   };
 
@@ -892,78 +859,6 @@ export class ResonanceController {
     });
   }
 
-  // Flick = musical hit: big wave, both motors, accent sound.
-  // Recorded into the loop like any other event.
-  // `fromMotion`: the flick came from moving the hand (cursor or camera), so a click / pinch
-  // immediately after it may be the same gesture (see absorbCursorFlick).
-  flick(x: number, y: number, fromMotion = false) {
-    const s = this.sim;
-    if (s.focus) {
-      return;
-    }
-    const before = s.recRaw.length;
-    const rm = s.reduced ? 0.4 : 1;
-    s.ripples.push({
-      x,
-      y,
-      r: 0,
-      v: s.reduced ? 4 : 6.5,
-      w: 100,
-      s: 0.95 * rm,
-      life: 1,
-      decay: 0.012,
-      hot: 1,
-    });
-    if (s.ripples.length > 16) {
-      s.ripples.shift();
-    }
-    s.boost = Math.min(0.5, s.boost + 0.25);
-    s.haptic = Math.max(s.haptic, 0.9);
-    s.flickT = s.t;
-    if (s.screen === 'studio') {
-      this.sendHaptics(R.compile({ layer: 'hit' }), 'Both motors · flick');
-    }
-    if (this.audible()) {
-      this.hitSound();
-    }
-    if (s.transport === 'finding') {
-      this.pulseHit();
-    }
-    this.recEvent(
-      { layer: 'hit', dur: 0.1, slot: -1, vel: 1, art: 'staccato', accent: true, gesture: 'flick' },
-      this.transport.nowStep(),
-    );
-    this.cursorFlick = fromMotion
-      ? {
-          wall: performance.now(),
-          ev: s.recRaw.length > before ? s.recRaw[s.recRaw.length - 1] : null,
-        }
-      : null;
-  }
-
-  /**
-   * A click / pinch right after a motion flick (cursor or camera) is one gesture — moving into a
-   * zone, then hitting — not two hits. The click / pinch is the intended hit, so the flick's
-   * recorded event is withdrawn.
-   */
-  private absorbCursorFlick() {
-    const f = this.cursorFlick;
-    this.cursorFlick = null;
-    if (!f || !f.ev || performance.now() - f.wall > FLICK_CLICK_MERGE_MS) {
-      return;
-    }
-    const s = this.sim;
-    const owners = [s.recRaw, ...this.perf.layers.map((l) => l.raw)];
-    for (const raw of owners) {
-      const i = raw.indexOf(f.ev);
-      if (i >= 0) {
-        raw.splice(i, 1);
-        this.rebuildScore();
-        return;
-      }
-    }
-  }
-
   // ---- frame
   private loop = (now: number) => {
     this.raf = requestAnimationFrame(this.loop);
@@ -1012,16 +907,9 @@ export class ResonanceController {
         h.tx = W * 0.5 + Math.cos(t * sp) * W * rr;
         h.ty = H * 0.4 + Math.sin(t * sp) * H * rr;
       } else {
-        const ph = t % 3.6;
-        h.tx = W * (0.5 + 0.2 * Math.sin(t * 0.4));
-        h.ty = ph < 3 ? H * (0.3 + 0.06 * Math.sin(t * 0.9)) : H * 0.72;
-        if (ph >= 3 && !s.ghostFlicked) {
-          s.ghostFlicked = true;
-          this.flick(W * 0.5, H * 0.5);
-        }
-        if (ph < 3) {
-          s.ghostFlicked = false;
-        }
+        // Tactile step: a slow, steady sway, as if keeping time with the wrist.
+        h.tx = W * (0.5 + 0.16 * Math.sin(t * 0.5));
+        h.ty = H * (0.44 + 0.05 * Math.sin(t * 1.6));
       }
       h.lastMove = t;
     }
@@ -1049,8 +937,9 @@ export class ResonanceController {
     }
     if (s.live && !s.live.holdSent && t - s.live.start > 0.25) {
       s.live.holdSent = true;
-      if (s.screen === 'studio') {
-        this.sendHaptics([R.holdCmd(s.live.vel)], 'Expression · held note');
+      // Only Bass has a motor; Keys and Lead holds are heard and seen, not felt.
+      if (s.screen === 'studio' && s.live.inst === 'bass') {
+        s.live.holdFelt = this.sendHaptics([R.holdCmd(s.live.vel)], 'Bass · held note');
       }
     }
     // v8 notation: a live held melodic note leaves a trail behind the hand, then dissolves.
@@ -1101,6 +990,7 @@ export class ResonanceController {
     let total = 0;
     let count = 0;
     let recBar = 0;
+    let waitBars = 0;
     const ph = this.clockPhase();
     if (c) {
       total = c.len;
@@ -1110,7 +1000,10 @@ export class ResonanceController {
     // Count-in (4 → 1) and recording bar, read from the transport position.
     const rc = s.rec;
     if (rc && now >= 0) {
-      if (tr === 'countin') {
+      if (tr === 'armed') {
+        // Bars of the loop still to play before the count-in bar begins.
+        waitBars = Math.max(1, Math.ceil((rc.ciStep - now) / BAR_STEPS));
+      } else if (tr === 'countin') {
         const beats = (now - rc.ciStep) / 4;
         count = beats < 0 ? 0 : Math.max(1, 4 - Math.floor(beats));
       } else {
@@ -1131,6 +1024,7 @@ export class ResonanceController {
       inst,
       count,
       recBar,
+      waitBars,
       act,
       energy: s.energy,
       slot,
@@ -1228,12 +1122,8 @@ export class ResonanceController {
     this.audio.drum(d, vel, undefined, this.liveMeta('live'));
   }
 
-  hitSound() {
-    this.audio.hit(undefined, this.liveMeta('flick-live'));
-  }
-
   /** Dev diagnostics: where a live trigger sits on the master loop. */
-  private liveMeta(source: 'live' | 'flick-live'): TriggerMeta | undefined {
+  private liveMeta(source: 'live'): TriggerMeta | undefined {
     if (!import.meta.env.DEV) {
       return undefined;
     }
@@ -1254,7 +1144,7 @@ export class ResonanceController {
       return undefined;
     }
     return {
-      source: ev.metro ? 'metronome' : ev.layer === 'hit' ? 'flick-playback' : 'playback',
+      source: ev.metro ? 'metronome' : 'playback',
       id: ev.id,
       step: this.lastAbs,
       loopTime: ev.t,
@@ -1263,10 +1153,14 @@ export class ResonanceController {
     };
   }
 
-  /** The audible click plays while setting tempo, counting in and recording — never in playback. */
+  /**
+   * The audible click plays while setting tempo, counting in and recording — never in playback.
+   * Armed keeps whatever was playing: the click before the first layer, the loop after it.
+   */
   clickAudible() {
     const tr = this.sim.transport;
-    return this.state.clickOn && (tr === 'countin' || tr === 'recording' || tr === 'found');
+    const tempoClick = tr === 'found' || (tr === 'armed' && !this.perf.layers.length);
+    return this.state.clickOn && (tr === 'countin' || tr === 'recording' || tempoClick);
   }
 
   // ---- master transport
@@ -1405,6 +1299,14 @@ export class ResonanceController {
     if (!rc) {
       return;
     }
+    if (s.transport === 'armed' && abs >= rc.ciStep) {
+      s.transport = 'countin';
+      this.transport.draw(() => {
+        if (s.rec === rc) {
+          this.setState({ transport: 'countin' });
+        }
+      }, time);
+    }
     if (s.transport === 'countin' && abs >= rc.startStep) {
       s.transport = 'recording';
       this.transport.draw(() => {
@@ -1443,17 +1345,20 @@ export class ResonanceController {
     if (this.audible()) {
       this.audioFor(ev, time);
     }
-    // Decide haptics now, while the transport state matches this event's time.
+    // Decide haptics now, while the transport state matches this event's time. While keeping
+    // time, the metronome is the only thing felt; the existing loop's layers are heard only.
     const haptic: [HapticCmd[], string] | null = ev.metro
       ? this.metroHaptic(ev)
-      : [ev.haptic || R.compile(ev), R.describe(ev)];
+      : this.keepingTime()
+        ? null
+        : [ev.haptic || R.compile(ev), R.describe(ev)];
     this.transport.draw(() => {
       if (ev.lid) {
         s.layerFire[ev.lid] = s.t;
       }
       this.visualFor(ev);
       if (haptic) {
-        this.sendHaptics(haptic[0], haptic[1]);
+        this.sendHaptics(haptic[0], haptic[1], !!ev.metro);
       }
       s.fired[ev.id] = s.t;
       this.flashScore(ev);
@@ -1468,9 +1373,7 @@ export class ResonanceController {
       }
       return;
     }
-    if (ev.layer === 'hit') {
-      this.audio.hit(time, meta);
-    } else if (ev.layer === 'drum' && ev.drum) {
+    if (ev.layer === 'drum' && ev.drum) {
       this.audio.drum(ev.drum, ev.velocity ?? 0.7, time, meta);
     } else if (ev.layer === 'note' && ev.inst && ev.midi != null) {
       const dur = ev.articulation === 'staccato' ? 0.14 : Math.max(0.15, ev.duration ?? 0.15);
@@ -1479,24 +1382,22 @@ export class ResonanceController {
   }
 
   /**
-   * Count-in / recording: Pulse is the tactile metronome, beat 1 strongest.
-   * Playback: Pulse carries only the composition's own rhythm events. The v7 fallback that
-   * invented a beat-1 pulse when no drums were sounding is intentionally not carried over.
+   * Count-in / recording: both motors together are the tactile metronome — beat 1 strong and
+   * long, beats 2–4 short and lighter. Playback: no metronome at all; the left (Drums) and right
+   * (Bass) motors carry only the composition's own events. The v7 fallback that invented a
+   * beat-1 pulse when no drums were sounding is intentionally not carried over.
    */
   private metroHaptic(ev: MusicEvent): [HapticCmd[], string] | null {
-    const tr = this.sim.transport;
-    if (tr !== 'countin' && tr !== 'recording') {
+    if (!this.keepingTime()) {
       return null;
     }
+    const both = (intensity: number, duration: number, type: string): HapticCmd[] => [
+      { channel: 'rhythm', intensity, duration, type },
+      { channel: 'expression', intensity, duration, type },
+    ];
     return ev.accent
-      ? [
-          [{ channel: 'rhythm', intensity: 1, duration: 140, type: 'downbeat' }],
-          'Pulse · metronome 1',
-        ]
-      : [
-          [{ channel: 'rhythm', intensity: 0.55, duration: 45, type: 'beat' }],
-          'Pulse · metronome ' + ev.beat,
-        ];
+      ? [both(1, 140, 'downbeat'), 'Both motors · beat 1']
+      : [both(0.55, 45, 'beat'), 'Both motors · beat ' + ev.beat];
   }
 
   /**
@@ -1633,13 +1534,10 @@ export class ResonanceController {
       return;
     }
 
-    if (ev.layer === 'hit') {
-      this.notation.instMark('flick', x, H * 0.5, 1, true);
-    }
     this.visualForV7(ev);
   }
 
-  /** Particles: beat, downbeat, drum hit, bass / keys / lead note, flick hit (v7 visualFor). */
+  /** Particles: beat, downbeat, drum hit, bass / keys / lead note (v7 visualFor). */
   private visualForV7(ev: MusicEvent) {
     const s = this.sim;
     const W = s.W;
@@ -1741,33 +1639,19 @@ export class ResonanceController {
       if (s.ripples.length > 16) {
         s.ripples.shift();
       }
-      return;
-    }
-
-    if (ev.layer === 'hit') {
-      s.ripples.push({
-        x: W * 0.5,
-        y: H * 0.5,
-        r: 0,
-        v: s.reduced ? 4 : 6.5,
-        w: 100,
-        s: 0.95 * rm,
-        life: 1,
-        decay: 0.012,
-        hot: 1,
-      });
-      s.boost = Math.min(0.5, s.boost + 0.25);
-      if (s.ripples.length > 16) {
-        s.ripples.shift();
-      }
     }
   }
 
   // ---- recording
 
   /**
-   * One bar of count-in on the master grid, then exactly four bars.
-   * The first layer re-anchors the loop so its bar 1 is loop bar 1.
+   * Every take starts from the beginning: one complete bar of count-in (beats 1–4), then exactly
+   * four bars from shared loop bar 1, committed on the following bar 1.
+   *
+   * The count-in begins on the first bar line the scheduler has not dispatched yet and that leads
+   * into loop bar 1. A press too late for that bar's beat 1 never shortens the count-in or fires
+   * beat 1 late: the take stays armed (the loop keeps playing) until the next such bar line.
+   * The first layer re-anchors the loop instead, so its bar 1 is simply the bar after the count-in.
    */
   armRecord(inst: InstKey) {
     const s = this.sim;
@@ -1777,19 +1661,21 @@ export class ResonanceController {
     }
     this.ensureAudio();
     const first = !this.perf.layers.length;
+    const tp = this.transport;
     let ci: number;
-    if (!this.transport.running) {
+    if (!tp.running) {
       // Start the clock on loop bar 4: the count-in bar begins now, loop bar 1 follows.
       this.startMaster(bpm, BAR_STEPS);
       ci = 0;
     } else {
-      const now = this.transport.nowStep();
-      const o = this.transport.origin;
-      const barStart = o + BAR_STEPS * Math.floor((now - o) / BAR_STEPS);
-      // Pressed right on a downbeat: count in from this bar, otherwise from the next.
-      ci = now - barStart < BAR_STEPS * 0.12 ? barStart : barStart + BAR_STEPS;
+      ci = tp.nextOpenBar();
       if (first) {
-        this.transport.origin = ci + BAR_STEPS;
+        tp.origin = ci + BAR_STEPS;
+      } else {
+        // The count-in bar must be loop bar 4, so recording starts on loop bar 1.
+        while (mod(ci + BAR_STEPS - tp.origin, LOOP_STEPS) !== 0) {
+          ci += BAR_STEPS;
+        }
       }
     }
     s.rec = {
@@ -1803,7 +1689,8 @@ export class ResonanceController {
     if (s.hand.pinch) {
       this.pinchEnd();
     }
-    this.setTransport('countin', {
+    // Armed until the count-in bar: onStep switches to 'countin' right before beat 1 dispatches.
+    this.setTransport('armed', {
       pick: false,
       recInst: inst,
       sheet: 'closed',
@@ -1908,7 +1795,7 @@ export class ResonanceController {
     if (tr === 'finding') {
       return this.cancelPulse();
     }
-    if (tr === 'countin' || tr === 'recording') {
+    if (tr === 'armed' || tr === 'countin' || tr === 'recording') {
       return this.cancelRecording();
     }
     if (!n) {
@@ -1924,7 +1811,7 @@ export class ResonanceController {
     const s = this.sim;
     const tr = s.transport;
     const bpm = this.state.bpm;
-    if (!bpm || tr === 'countin' || tr === 'recording' || tr === 'finding') {
+    if (!bpm || tr === 'armed' || tr === 'countin' || tr === 'recording' || tr === 'finding') {
       return;
     }
     this.ensureAudio();
@@ -2045,7 +1932,7 @@ export class ResonanceController {
 
   /**
    * v7 hand mapping. Drives the same simulated hand the cursor drives, and the same
-   * pinchStart / pinchEnd / flick calls, so everything downstream is shared.
+   * pinchStart / pinchEnd calls, so everything downstream is shared.
    */
   applyHands(all: Hands) {
     const s = this.sim;
@@ -2069,7 +1956,6 @@ export class ResonanceController {
         h.camPinch = false;
         this.pinchEnd();
       }
-      this.prevCy = null;
       this.pinchHi = Infinity; // a hand that reappears already pinched pinches at once
       return;
     }
@@ -2131,17 +2017,6 @@ export class ResonanceController {
       this.pinchLog.push({ t: now, pd, pinch: h.pinch, ev: pinchEvent });
       if (this.pinchLog.length > 3000) {
         this.pinchLog.splice(0, 1000);
-      }
-    }
-
-    // Flick: a fast downward palm movement (not while pinching).
-    const prev = this.prevCy;
-    this.prevCy = { y: cy, t: now };
-    if (prev && now - prev.t < 150 && !h.pinch) {
-      const vel = (cy - prev.y) / ((now - prev.t) / 1000);
-      if (vel > FLICK_SPEED && now - (this.lastFlick || 0) > 500) {
-        this.lastFlick = now;
-        this.flick(h.x, h.y, true);
       }
     }
   }
