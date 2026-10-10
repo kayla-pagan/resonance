@@ -1,7 +1,35 @@
 .app {
-  position: fixed; inset: 0; background: var(--bg); color: var(--ink); font-family: var(--sans);
-  overflow: hidden; user-select: none; -webkit-font-smoothing: antialiased;
+  position: fixed;
+  inset: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--sans);
+  overflow: hidden;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
 }
-.app-field { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: crosshair; }
-.app-brand { position: absolute; top: 27px; left: 30px; display: flex; align-items: center; gap: 10px; pointer-events: none; }
-.app-brand span { font-size: 12px; font-weight: 500; letter-spacing: .34em; text-transform: uppercase; line-height: 1; }
+.app-field {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  touch-action: none;
+  cursor: crosshair;
+}
+.app-brand {
+  position: absolute;
+  top: 27px;
+  left: 30px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  pointer-events: none;
+}
+.app-brand span {
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.34em;
+  text-transform: uppercase;
+  line-height: 1;
+}

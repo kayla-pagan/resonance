@@ -10,21 +10,62 @@
   --mono: 'Geist Mono', monospace;
 }
 
-html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); overflow: hidden; }
-a { color: var(--cyan); text-decoration: none; }
-a:hover { color: var(--ink); }
-button { font: inherit; cursor: pointer; white-space: nowrap; }
-button:disabled { cursor: default; }
-button:focus-visible { outline: 1.5px solid var(--cyan); outline-offset: 3px; }
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--ink);
+  overflow: hidden;
+}
+a {
+  color: var(--cyan);
+  text-decoration: none;
+}
+a:hover {
+  color: var(--ink);
+}
+button {
+  font: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+button:disabled {
+  cursor: default;
+}
+button:focus-visible {
+  outline: 1.5px solid var(--cyan);
+  outline-offset: 3px;
+}
 
 /* Shared type helpers used across screens. */
-.serif { font-family: var(--serif); font-weight: 400; }
-.mono { font-family: var(--mono); }
-.shadow-hero { text-shadow: 0 0 28px rgba(6,7,9,.95), 0 0 60px rgba(6,7,9,.8); }
-.shadow-soft { text-shadow: 0 0 18px rgba(6,7,9,.95); }
+.serif {
+  font-family: var(--serif);
+  font-weight: 400;
+}
+.mono {
+  font-family: var(--mono);
+}
+.shadow-hero {
+  text-shadow:
+    0 0 28px rgba(6, 7, 9, 0.95),
+    0 0 60px rgba(6, 7, 9, 0.8);
+}
+.shadow-soft {
+  text-shadow: 0 0 18px rgba(6, 7, 9, 0.95);
+}
 
-/* Hover states (the prototype's style-hover). !important because some colors are set inline from state. */
-.hv-ink:hover { color: var(--ink) !important; }
-.hv-cyan:hover { color: var(--cyan) !important; }
-.hv-amber:hover { color: var(--amber) !important; }
-.hv-accent-border:hover { border-color: rgba(127,224,236,.7) !important; }
+/* Hover states (the prototype's style-hover).
+   !important because some colors are set inline from state. */
+.hv-ink:hover {
+  color: var(--ink) !important;
+}
+.hv-cyan:hover {
+  color: var(--cyan) !important;
+}
+.hv-amber:hover {
+  color: var(--amber) !important;
+}
+.hv-accent-border:hover {
+  border-color: rgba(127, 224, 236, 0.7) !important;
+}

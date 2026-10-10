@@ -1,25 +1,112 @@
 .tempo-wrap {
-  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-  padding: 72px 24px 40px; box-sizing: border-box; pointer-events: none; overflow: auto;
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 72px 24px 40px;
+  box-sizing: border-box;
+  pointer-events: none;
+  overflow: auto;
 }
-.tempo { display: flex; flex-direction: column; align-items: center; gap: 24px; text-align: center; pointer-events: auto; }
-.tempo-eyebrow { font-size: 11px; letter-spacing: .24em; text-transform: uppercase; color: rgba(236,230,216,.62); }
-.tempo-dial { display: flex; align-items: center; gap: clamp(18px, 4vw, 48px); }
+.tempo {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 24px;
+  text-align: center;
+  pointer-events: auto;
+}
+.tempo-eyebrow {
+  font-size: 11px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: rgba(236, 230, 216, 0.62);
+}
+.tempo-dial {
+  display: flex;
+  align-items: center;
+  gap: clamp(18px, 4vw, 48px);
+}
 .tempo-step {
-  width: 52px; height: 52px; border-radius: 50%; border: 1px solid rgba(236,230,216,.26); background: rgba(12,13,17,.5);
-  color: var(--ink); font-size: 22px; line-height: 1; padding: 0;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  border: 1px solid rgba(236, 230, 216, 0.26);
+  background: rgba(12, 13, 17, 0.5);
+  color: var(--ink);
+  font-size: 22px;
+  line-height: 1;
+  padding: 0;
 }
-.tempo-readout { display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 3.2ch; }
-.tempo-bpm { font-size: clamp(96px, 13vw, 168px); line-height: .85; letter-spacing: -.02em; text-shadow: 0 0 40px rgba(6,7,9,.9); }
-.tempo-unit { font-size: 12px; letter-spacing: .2em; color: rgba(236,230,216,.6); }
-.tempo-beats { display: flex; align-items: center; gap: 12px; height: 10px; }
-.tempo-beat { border-radius: 50%; }
-.tempo-sub { margin: 0; max-width: 420px; min-height: 42px; font-size: 14px; line-height: 1.5; color: rgba(236,230,216,.72); text-wrap: pretty; }
-.tempo-actions { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
-.tempo-btn { height: 50px; min-width: 170px; padding: 0 22px; border-radius: 12px; font-size: 15px; }
-.tempo-btn--find { border: 1px solid rgba(127,224,236,.6); background: rgba(12,13,17,.5); color: var(--ink); backdrop-filter: blur(10px); }
+.tempo-readout {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-width: 3.2ch;
+}
+.tempo-bpm {
+  font-size: clamp(96px, 13vw, 168px);
+  line-height: 0.85;
+  letter-spacing: -0.02em;
+  text-shadow: 0 0 40px rgba(6, 7, 9, 0.9);
+}
+.tempo-unit {
+  font-size: 12px;
+  letter-spacing: 0.2em;
+  color: rgba(236, 230, 216, 0.6);
+}
+.tempo-beats {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 10px;
+}
+.tempo-beat {
+  border-radius: 50%;
+}
+.tempo-sub {
+  margin: 0;
+  max-width: 420px;
+  min-height: 42px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: rgba(236, 230, 216, 0.72);
+  text-wrap: pretty;
+}
+.tempo-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.tempo-btn {
+  height: 50px;
+  min-width: 170px;
+  padding: 0 22px;
+  border-radius: 12px;
+  font-size: 15px;
+}
+.tempo-btn--find {
+  border: 1px solid rgba(127, 224, 236, 0.6);
+  background: rgba(12, 13, 17, 0.5);
+  color: var(--ink);
+  backdrop-filter: blur(10px);
+}
 .tempo-btn--start {
-  border: 1px solid var(--ink); background: var(--ink); color: var(--on-ink); font-weight: 500;
-  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  border: 1px solid var(--ink);
+  background: var(--ink);
+  color: var(--on-ink);
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
 }
-.tempo-tri { width: 8px; height: 9px; background: var(--on-ink); clip-path: polygon(0 0, 100% 50%, 0 100%); }
+.tempo-tri {
+  width: 8px;
+  height: 9px;
+  background: var(--on-ink);
+  clip-path: polygon(0 0, 100% 50%, 0 100%);
+}
