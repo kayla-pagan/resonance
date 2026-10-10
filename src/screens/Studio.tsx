@@ -1,11 +1,12 @@
-import { useSyncExternalStore, type RefObject } from 'react';
+import { useEffect, useLayoutEffect, useRef, useSyncExternalStore, type RefObject } from 'react';
+import { placeClear } from '../ui/placeClear';
 import { INSTR, type InstKey } from '../resonance/engine';
 import type { AppState } from '../resonance/appState';
 import { availableInstruments } from '../resonance/appState';
 import { HitDots } from '../ui/Dots';
 import { StudioDock, StudioTransport } from './StudioTransport';
 import { MutedHero, TactileModule, WristbandPopover } from './Tactile';
-import type { TactileRefs } from '../resonance/controller';
+import type { ControllerHost, TactileRefs } from '../resonance/controller';
 import type { ScreenProps } from './types';
 import './Studio.css';
 
@@ -71,8 +72,14 @@ export function Studio({
   ui,
   stageRef,
   tactile,
-}: ScreenProps & { stageRef: RefObject<HTMLDivElement | null>; tactile: TactileRefs }) {
+  cam: { video: camVideo, overlay: camOverlay },
+}: ScreenProps & {
+  stageRef: RefObject<HTMLDivElement | null>;
+  tactile: TactileRefs;
+  cam: ControllerHost['cam'];
+}) {
   const u = useSyncExternalStore(ui.subscribe, ui.get);
+  const loopRef = useRef<HTMLDivElement>(null);
   const tr = st.transport;
   const busy = tr === 'countin' || tr === 'recording';
   const nL = st.layers.length;
@@ -185,6 +192,30 @@ export function Studio({
   // Loop panel: inline on tall desktop viewports, a popover on short ones,
   // hidden on mobile (it lives in a sheet there).
   const lpMode = mob ? 'none' : st.vh >= 760 ? 'inline' : 'pop';
+  const loopPopOpen = lpMode === 'pop' && st.loopPop && (!!st.bpm || nL > 0);
+
+  // Compact popover: place it where it covers neither the camera preview nor any control.
+  useLayoutEffect(() => {
+    if (loopPopOpen && loopRef.current) {
+      placeClear(loopRef.current);
+    }
+  }, [loopPopOpen, st.vw, st.vh, nL, busy, st.showPreview, st.pvMobHidden, st.camNotice, st.cam]);
+
+  // …and dismiss it by clicking / tapping anywhere outside it (the Loop button toggles it).
+  useEffect(() => {
+    if (!loopPopOpen) {
+      return;
+    }
+    const onDown = (e: PointerEvent) => {
+      const t = e.target as Element | null;
+      if (!t || loopRef.current?.contains(t) || t.closest('.tp-loop')) {
+        return;
+      }
+      setState({ loopPop: false });
+    };
+    window.addEventListener('pointerdown', onDown, true);
+    return () => window.removeEventListener('pointerdown', onDown, true);
+  }, [loopPopOpen, setState]);
   const pend = busy
     ? {
         num: String(nL + 1).padStart(2, '0'),
@@ -232,8 +263,17 @@ export function Studio({
 
       <div className="studio-status">
         <div data-avoid="1" className="studio-status-row">
-          {/* Pending (camera): useCamera / retry. */}
-          <button title={camTitle} className="studio-chip">
+          <button
+            onClick={() => {
+              if (st.cam === 'simulated') {
+                ctrl.current?.useCamera();
+              } else if (st.cam === 'unavailable') {
+                ctrl.current?.requestCamera();
+              }
+            }}
+            title={camTitle}
+            className="studio-chip"
+          >
             <span className="studio-chip-label">Camera</span>
             <StatusDot d={camDot} />
             <span>{camDot.text}</span>
@@ -287,9 +327,23 @@ export function Studio({
             Help
           </button>
         </div>
+        {st.camNotice && (
+          <div data-avoid="1" role="status" className="studio-cam-notice">
+            <span>Camera unavailable — cursor control active.</span>
+            <button onClick={() => ctrl.current?.requestCamera()} className="studio-cam-retry">
+              Retry
+            </button>
+          </div>
+        )}
         {pvShow && (
           <div data-avoid="1" className="studio-preview">
-            {/* Pending (camera): live video + hand skeleton canvas, "No camera" state. */}
+            {st.cam === 'live' && (
+              <>
+                <video ref={camVideo} autoPlay muted playsInline className="studio-cam-video" />
+                <canvas ref={camOverlay} className="studio-cam-overlay" />
+              </>
+            )}
+            {st.cam === 'unavailable' && <span className="studio-cam-none">No camera</span>}
             {!camHit && (
               <div
                 className="studio-sim-hand"
@@ -440,6 +494,7 @@ export function Studio({
 
       {(!!st.bpm || hasLoop) && lpMode !== 'none' && (lpMode === 'inline' || st.loopPop) && (
         <div
+          ref={loopRef}
           data-avoid="soft"
           aria-label="Your loop"
           className={'studio-loop studio-loop--' + lpMode}

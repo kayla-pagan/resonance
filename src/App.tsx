@@ -6,7 +6,7 @@ import {
   type AppState,
   type StatePatch,
 } from './resonance/appState';
-import { ResonanceController, type TactileRefs } from './resonance/controller';
+import { ResonanceController, type ControllerHost, type TactileRefs } from './resonance/controller';
 import { Landing } from './screens/Landing';
 import { Tutorial } from './screens/Tutorial';
 import { TempoSetup } from './screens/TempoSetup';
@@ -35,6 +35,11 @@ export default function App() {
     playhead: createRef<HTMLSpanElement>(),
     score: createRef<HTMLDivElement>(),
   }));
+  // Camera preview: mirrored video + hand skeleton overlay (tracking runs without them).
+  const [cam] = useState<ControllerHost['cam']>(() => ({
+    video: createRef<HTMLVideoElement>(),
+    overlay: createRef<HTMLCanvasElement>(),
+  }));
 
   // Class-style merge, like the prototype's this.setState.
   const setState = useCallback((patch: StatePatch) => {
@@ -55,22 +60,25 @@ export default function App() {
       canvasRef,
       stageRef,
       tactile,
+      cam,
     });
     ctrl.current = c;
     return () => {
       c.destroy();
       ctrl.current = null;
     };
-  }, [setState, ui, tactile]);
+  }, [setState, ui, tactile, cam]);
 
   useEffect(() => {
     ctrl.current?.didUpdate(st);
   }, [st]);
 
-  // Pending (camera): "Enter the studio" also sets cam: 'pending' and requests the camera.
-  // Until the MediaPipe milestone lands it enters with cursor control, like demo mode.
-  const enterStudio = () =>
-    setState({ mode: 'live', screen: 'tutorial', step: 0, showPreview: true });
+  // "Enter the studio" asks for the camera (this click is the permission gesture); if it is
+  // refused or unavailable, cursor control simply continues. Demo mode never asks.
+  const enterStudio = () => {
+    setState({ mode: 'live', screen: 'tutorial', step: 0, cam: 'pending', showPreview: true });
+    ctrl.current?.requestCamera();
+  };
   const enterDemo = () => setState({ mode: 'demo', screen: 'tutorial', step: 0, cam: 'simulated' });
 
   const screenProps = { st, setState, ctrl, ui };
@@ -88,7 +96,9 @@ export default function App() {
       {st.screen === 'welcome' && <Landing onEnterStudio={enterStudio} onEnterDemo={enterDemo} />}
       {st.screen === 'tutorial' && <Tutorial {...screenProps} />}
       {st.screen === 'tempo' && <TempoSetup {...screenProps} />}
-      {st.screen === 'studio' && <Studio {...screenProps} stageRef={stageRef} tactile={tactile} />}
+      {st.screen === 'studio' && (
+        <Studio {...screenProps} stageRef={stageRef} tactile={tactile} cam={cam} />
+      )}
     </div>
   );
 }
