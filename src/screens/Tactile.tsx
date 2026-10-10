@@ -1,7 +1,7 @@
 import type { CSSProperties, RefObject } from 'react';
-import type { AppState, Feel, StatePatch } from '../resonance/appState';
-import type { ResonanceController, TactileRefs } from '../resonance/controller';
-import { INSTR } from '../resonance/engine';
+import type { AppState, Feel, StatePatch } from '../core/appState';
+import type { ResonanceController, TactileRefs } from '../core/controller';
+import { INSTR } from '../core/engine';
 import { LEGEND_SHAPE, musicGeometry, scoreGeometry } from './scoreGeometry';
 import './Tactile.css';
 

@@ -1,5 +1,5 @@
-import { INSTR } from '../resonance/engine';
-import { availableInstruments, type AppState, type Ui } from '../resonance/appState';
+import { INSTR } from '../core/engine';
+import { availableInstruments, type AppState, type Ui } from '../core/appState';
 
 const TRI = 'polygon(0 0,100% 50%,0 100%)';
 

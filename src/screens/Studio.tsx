@@ -1,12 +1,12 @@
 import { useEffect, useLayoutEffect, useRef, useSyncExternalStore, type RefObject } from 'react';
 import { placeClear } from '../ui/placeClear';
-import { INSTR, type InstKey } from '../resonance/engine';
-import type { AppState } from '../resonance/appState';
-import { availableInstruments } from '../resonance/appState';
+import { INSTR, type InstKey } from '../core/engine';
+import type { AppState } from '../core/appState';
+import { availableInstruments } from '../core/appState';
 import { HitDots } from '../ui/Dots';
 import { StudioDock, StudioTransport } from './StudioTransport';
 import { MutedHero, TactileModule, WristbandPopover } from './Tactile';
-import type { ControllerHost, TactileRefs } from '../resonance/controller';
+import type { ControllerHost, TactileRefs } from '../core/controller';
 import type { ScreenProps } from './types';
 import './Studio.css';
 
