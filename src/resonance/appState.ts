@@ -12,8 +12,8 @@ export type PrototypeProps = typeof PROTOTYPE_PROPS;
 
 export type Feel = 'full' | 'rhythm' | 'expression' | 'off';
 
-/** Instruments available in this milestone, in recording order. Keys and Lead arrive later. */
-export const MILESTONE_INSTRUMENTS: InstKey[] = ['drums', 'bass'];
+/** Instruments available to record, in order (Drums first, then any of the rest). */
+export const MILESTONE_INSTRUMENTS: InstKey[] = ['drums', 'bass', 'keys', 'lead'];
 
 /** Instruments not yet recorded, in order. */
 export function availableInstruments(layers: { inst: InstKey }[]) {
@@ -78,6 +78,34 @@ export interface AppState {
   viaPulse: boolean;
   /** Mirror of the controller's recorded layers (id, instrument, mute) for display. */
   layers: LayerSummary[];
+  /** The tactile score's marks; republished only when the score changes. */
+  score: ScoreView;
+}
+
+/** One event on the tactile score (static; firing highlights are applied imperatively). */
+export interface ScoreMark {
+  id: string;
+  t: number;
+  layer: string;
+  inst: string | null;
+  drum: string | null;
+  metro: boolean;
+  step: number;
+  dur: number;
+  vel: number;
+  legato: boolean;
+  accent: boolean;
+  muted: boolean;
+  rec: boolean;
+  /** The event has a haptic (felt) form. */
+  felt: boolean;
+}
+
+export interface ScoreView {
+  len: number;
+  marks: ScoreMark[];
+  /** Instrument of each layer in order, plus the one being recorded (for the legend). */
+  legend: { inst: InstKey; muted: boolean; rec: boolean }[];
 }
 
 export interface LayerSummary {
@@ -135,6 +163,7 @@ export function initialState(): AppState {
     prevBpm: null,
     viaPulse: false,
     layers: [],
+    score: { len: 1, marks: [], legend: [] },
   };
 }
 

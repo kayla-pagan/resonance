@@ -18,6 +18,8 @@ interface Players {
   hit: Tone.NoiseSynth;
   bass: Tone.MonoSynth;
   snare: Tone.NoiseSynth;
+  keys: Tone.PolySynth<Tone.AMSynth>;
+  lead: Tone.PolySynth<Tone.Synth>;
 }
 
 const hz = (m: number) => 440 * Math.pow(2, (m - 69) / 12);
@@ -95,8 +97,8 @@ export class AudioEngine {
     click.volume.value = -22;
 
     this.bus = { out, comp, rev, delay, filt, click };
-    this.sched = this.makePlayers(comp, rev);
-    this.live = this.makePlayers(comp, rev);
+    this.sched = this.makePlayers(comp, rev, filt);
+    this.live = this.makePlayers(comp, rev, filt);
 
     // applyWorld: fixed tonal base.
     rev.wet.rampTo(0.28, 0.4);
@@ -119,9 +121,10 @@ export class AudioEngine {
     this.lastDrum = {};
   }
 
-  setMuted(muted: boolean) {
-    this.muted = muted;
-    this.bus?.out.gain.rampTo(muted ? 0 : 0.8, 0.15);
+  /** Silence or restore the whole mix (mute, or Feel only), ramping over `rampSec`. */
+  setOutput(off: boolean, rampSec: number) {
+    this.muted = off;
+    this.bus?.out.gain.rampTo(off ? 0 : 0.8, rampSec);
   }
 
   /** The live filter follows movement energy and two-hand spread. */
@@ -187,50 +190,110 @@ export class AudioEngine {
     });
   }
 
-  /** A bass note from the loop, at its transport time. */
-  bassNote(midi: number, dur: number, vel: number, time: number, meta?: TriggerMeta) {
+  /** A melodic note from the loop, at its transport time (v7 audioFor). */
+  note(inst: string, midi: number, dur: number, vel: number, time: number, meta?: TriggerMeta) {
     const p = this.sched;
     if (!p) {
       return;
     }
-    this.safely('bass', () => {
-      p.bass.triggerAttackRelease(
-        hz(midi),
-        Math.max(0.1, dur * 0.95),
-        this.at('sched:bass', time, meta),
-        vel,
-      );
+    this.safely('note', () => {
+      if (inst === 'bass') {
+        p.bass.triggerAttackRelease(
+          hz(midi),
+          Math.max(0.1, dur * 0.95),
+          this.at('sched:bass', time, meta),
+          vel,
+        );
+      } else if (inst === 'keys') {
+        // Warm two-note chord: root + fifth.
+        p.keys.triggerAttackRelease(
+          [hz(midi), hz(midi + 7)],
+          Math.max(0.2, dur),
+          this.polyAt('sched:keys', time, meta),
+          vel * 0.9,
+        );
+      } else {
+        p.lead.triggerAttackRelease(hz(midi), dur, this.polyAt('sched:lead', time, meta), vel);
+      }
     });
   }
 
-  /** Live held note start. Only the bass voice exists in this milestone. */
+  /** Live held note start (v7 noteStart). */
   noteStart(midi: number, vel: number, inst: string, meta?: TriggerMeta) {
     const p = this.live;
-    if (!p || inst !== 'bass') {
+    if (!p) {
       return;
     }
-    this.safely('noteStart', () =>
-      p.bass.triggerAttack(hz(midi), this.at('live:bass', undefined, meta), vel),
-    );
+    this.safely('noteStart', () => {
+      if (inst === 'bass') {
+        p.bass.triggerAttack(hz(midi), this.at('live:bass', undefined, meta), vel);
+      } else if (inst === 'keys') {
+        p.keys.triggerAttack(
+          [hz(midi), hz(midi + 7)],
+          this.polyAt('live:keys', undefined, meta),
+          vel * 0.9,
+        );
+      } else {
+        p.lead.triggerAttack(hz(midi), this.polyAt('live:lead', undefined, meta), vel);
+      }
+    });
   }
 
-  noteEnd(_midi: number, inst: string) {
+  /** Live held note end (v7 noteEnd). */
+  noteEnd(midi: number, inst: string) {
     const p = this.live;
-    if (!p || inst !== 'bass') {
+    if (!p) {
       return;
     }
-    this.safely('noteEnd', () => p.bass.triggerRelease(this.at('live:bassRelease')));
+    this.safely('noteEnd', () => {
+      const now = Tone.immediate();
+      if (inst === 'bass') {
+        p.bass.triggerRelease(this.at('live:bassRelease'));
+      } else if (inst === 'keys') {
+        p.keys.triggerRelease([hz(midi), hz(midi + 7)], now);
+      } else {
+        p.lead.triggerRelease(hz(midi), now);
+      }
+    });
   }
 
   /** Silence anything sustaining (pause / reset). */
   releaseAll() {
     const now = Tone.immediate();
     for (const p of [this.sched, this.live]) {
-      this.safely('releaseAll', () => p?.bass.triggerRelease(now));
+      this.safely('releaseAll', () => {
+        p?.bass.triggerRelease(now);
+        p?.keys.releaseAll(now);
+        p?.lead.releaseAll(now);
+      });
     }
   }
 
-  private makePlayers(comp: Tone.Compressor, rev: Tone.Reverb): Players {
+  private makePlayers(comp: Tone.Compressor, rev: Tone.Reverb, filt: Tone.Filter): Players {
+    // Lead: bright voice on top, through the movement-energy filter.
+    const lead = this.keep(
+      new Tone.PolySynth(Tone.Synth, {
+        oscillator: { type: 'triangle' },
+        envelope: { attack: 0.004, decay: 0.28, sustain: 0.3, release: 0.8 },
+      }).connect(filt),
+    );
+    lead.volume.value = -10;
+    lead.maxPolyphony = 8;
+
+    // Keys: warm AM chords into the reverb.
+    const keysF = this.keep(new Tone.Filter(2200, 'lowpass').connect(rev));
+    const keys = this.keep(
+      new Tone.PolySynth(Tone.AMSynth, {
+        harmonicity: 1.5,
+        oscillator: { type: 'sine' },
+        envelope: { attack: 0.015, decay: 0.5, sustain: 0.45, release: 1.6 },
+        modulation: { type: 'triangle' },
+        modulationEnvelope: { attack: 0.2, decay: 0.3, sustain: 0.6, release: 1 },
+      }).connect(keysF),
+    );
+    keys.volume.value = -12;
+    keys.maxPolyphony = 10;
+
     const kick = this.keep(
       new Tone.MembraneSynth({
         pitchDecay: 0.03,
@@ -283,7 +346,7 @@ export class AudioEngine {
     );
     snare.volume.value = -10;
 
-    return { kick, hat, hit, bass, snare };
+    return { kick, hat, hit, bass, snare, keys, lead };
   }
 
   private keep<T extends Tone.ToneAudioNode>(n: T) {
@@ -304,6 +367,13 @@ export class AudioEngine {
     }
     this.last[voice] = t;
     this.log(voice, requested, t, meta, false);
+    return t;
+  }
+
+  /** Poly voices (Keys, Lead) take a fresh voice per note, so no start-time guard is needed. */
+  private polyAt(voice: string, time?: number, meta?: TriggerMeta) {
+    const t = time ?? Tone.immediate();
+    this.log(voice, t, t, meta, false);
     return t;
   }
 

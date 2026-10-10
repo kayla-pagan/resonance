@@ -664,3 +664,9 @@
   font-size: 12px;
   color: rgba(236, 230, 216, 0.55);
 }
+.studio-loop-complete {
+  padding-top: 12px;
+  font-style: italic;
+  font-size: 21px;
+  color: var(--cyan);
+}
