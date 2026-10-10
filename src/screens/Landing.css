@@ -1,0 +1,25 @@
+.landing {
+  position: absolute; left: 30px; right: 30px; bottom: 44px;
+  display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 32px;
+  pointer-events: none;
+}
+.landing-title {
+  margin: 0; font-size: clamp(56px, 8.6vw, 132px); line-height: .92; letter-spacing: -.02em;
+  max-width: 940px; text-wrap: balance; pointer-events: auto;
+}
+.landing-title em { font-style: italic; }
+.landing-feel { color: var(--cyan); }
+
+.landing-actions { display: flex; flex-direction: column; align-items: stretch; gap: 10px; width: 240px; pointer-events: auto; }
+.landing-btn {
+  height: 50px; padding: 0 22px; border-radius: 12px; font-size: 15px;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.landing-btn--primary { border: 1px solid var(--ink); background: var(--ink); color: var(--on-ink); font-weight: 500; }
+.landing-btn--ghost { border: 1px solid rgba(236,230,216,.28); background: rgba(12,13,17,.5); color: var(--ink); backdrop-filter: blur(10px); }
+.landing-tri { width: 8px; height: 9px; background: var(--on-ink); clip-path: polygon(0 0, 100% 50%, 0 100%); }
+.landing-ring { width: 7px; height: 7px; border-radius: 50%; border: 1.5px solid var(--cyan); }
+.landing-note {
+  margin: 6px 0 0; font-size: 10.5px; line-height: 1.6; letter-spacing: .1em; text-transform: uppercase;
+  color: rgba(236,230,216,.6);
+}
