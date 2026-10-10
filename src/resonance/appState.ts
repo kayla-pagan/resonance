@@ -7,6 +7,8 @@ export const PROTOTYPE_PROPS = {
   startScreen: 'welcome' as Screen,
   density: 'Light' as const,
   trails: 0.45,
+  /** v8 "Visual music notation": instrument marks, held-note ribbons, breath. Off = v7 visuals. */
+  notation: true,
 };
 export type PrototypeProps = typeof PROTOTYPE_PROPS;
 
@@ -80,6 +82,8 @@ export interface AppState {
   layers: LayerSummary[];
   /** The tactile score's marks; republished only when the score changes. */
   score: ScoreView;
+  /** Score tab: Music (each instrument) or Tactile (each motor). v8 default: Music. */
+  scoreView: 'music' | 'tactile';
 }
 
 /** One event on the tactile score (static; firing highlights are applied imperatively). */
@@ -91,6 +95,8 @@ export interface ScoreMark {
   drum: string | null;
   metro: boolean;
   step: number;
+  /** Pitch slot 0–5 (melodic notes), used for the Music view's small vertical offset. */
+  slot: number;
   dur: number;
   vel: number;
   legato: boolean;
@@ -164,6 +170,7 @@ export function initialState(): AppState {
     viaPulse: false,
     layers: [],
     score: { len: 1, marks: [], legend: [] },
+    scoreView: 'music',
   };
 }
 

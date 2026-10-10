@@ -119,7 +119,7 @@ export function StudioTransport({ st, setState, ctrl, u, tactile }: TransportPro
         </div>
         <PlaybackModes st={st} ctrl={ctrl} />
       </div>
-      {tactile && <TactileScore st={st} tactile={tactile} />}
+      {tactile && <TactileScore st={st} setState={setState} tactile={tactile} />}
     </div>
   );
 }

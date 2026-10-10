@@ -1,8 +1,8 @@
-import type { RefObject } from 'react';
+import type { CSSProperties, RefObject } from 'react';
 import type { AppState, Feel, StatePatch } from '../resonance/appState';
 import type { ResonanceController, TactileRefs } from '../resonance/controller';
 import { INSTR } from '../resonance/engine';
-import { LEGEND_SHAPE, scoreGeometry } from './scoreGeometry';
+import { LEGEND_SHAPE, musicGeometry, scoreGeometry } from './scoreGeometry';
 import './Tactile.css';
 
 type Ctrl = RefObject<ResonanceController | null>;
@@ -88,23 +88,55 @@ export function TactileModule({
   );
 }
 
-/** Tactile score: Pulse and Expression lanes across the four bars, with legend and playhead. */
+/**
+ * The loop score, two views of the same four bars (v8): Music shows each instrument,
+ * Tactile shows each motor. Both share the master playhead and firing highlights.
+ */
 export function TactileScore({
   st,
+  setState,
   tactile: { score, playhead },
 }: {
   st: AppState;
+  setState: (patch: StatePatch) => void;
   tactile: TactileRefs;
 }) {
   const g = scoreGeometry(st.score, st);
   const lanes = laneOps(st);
+  const music = st.scoreView !== 'tactile';
+  const mus = musicGeometry(st.score);
   return (
     <div className="ts-wrap">
       <div
-        aria-label="Tactile score: Pulse lane and Expression lane across four bars"
+        aria-label="Score across four bars: Music view shows each instrument, Tactile view shows each motor"
         className="ts"
       >
-        <span className="ts-title">Tactile score</span>
+        <div role="tablist" aria-label="Score view" className="ts-tabs">
+          <button
+            role="tab"
+            aria-selected={music}
+            onClick={() => setState({ scoreView: 'music' })}
+            className="ts-tab ts-tab--music"
+            style={{
+              color: music ? '#ece6d8' : 'rgba(236,230,216,.45)',
+              textDecoration: music ? 'underline' : 'none',
+            }}
+          >
+            Music
+          </button>
+          <button
+            role="tab"
+            aria-selected={!music}
+            onClick={() => setState({ scoreView: 'tactile' })}
+            className="ts-tab ts-tab--tactile"
+            style={{
+              color: music ? 'rgba(236,230,216,.45)' : '#ece6d8',
+              textDecoration: music ? 'none' : 'underline',
+            }}
+          >
+            Tactile
+          </button>
+        </div>
         <div className="ts-bars">
           {g.bars.map((b) => (
             <span key={b.n} className="ts-bar-n mono" style={{ left: b.left }}>
@@ -113,65 +145,133 @@ export function TactileScore({
           ))}
           {/* Pending: Tactile memory (not part of this milestone). */}
         </div>
-        <div className="ts-lanes">
-          <span style={{ opacity: lanes.pulse }}>Pulse</span>
-          <span className="ts-lane-expr" style={{ opacity: lanes.expr }}>
-            Expression
-          </span>
-        </div>
-        <div ref={score} className="ts-field">
-          <span className="ts-rule ts-rule--pulse" />
-          <span className="ts-rule ts-rule--expr" />
-          {g.bars.map((b) => (
-            <span key={b.n} className="ts-bar-line" style={{ left: b.left }} />
-          ))}
-          {g.pulse.map((p) => (
-            <span
-              key={p.id}
-              data-ev={p.id}
-              className="ts-pulse"
-              style={{
-                left: p.left,
-                width: p.size,
-                height: p.size,
-                marginLeft: p.margin,
-                marginTop: p.margin,
-                background: p.bg,
-                opacity: p.op,
-              }}
-            />
-          ))}
-          {g.expr.map((x) => (
-            <span
-              key={x.id}
-              data-ev={x.id}
-              className={'ts-expr' + (x.glow ? ' ts-expr--glow' : '')}
-              style={{
-                top: x.top,
-                left: x.left,
-                width: x.w,
-                height: x.h,
-                marginLeft: x.ml,
-                marginTop: x.mt,
-                borderRadius: x.r,
-                clipPath: x.clip,
-                opacity: x.op,
-              }}
-            />
-          ))}
-          {g.hits.map((h) => (
-            <span
-              key={h.id}
-              data-ev={h.id}
-              className="ts-hit"
-              style={{ left: h.left, opacity: h.op }}
-            >
-              <span className="ts-hit-dot ts-hit-dot--top" />
-              <span className="ts-hit-dot ts-hit-dot--bottom" />
-            </span>
-          ))}
-          <span ref={playhead} className="ts-playhead" />
-        </div>
+        {music && (
+          <>
+            <div className="mus-rows">
+              {mus.rows.map((r) => (
+                <span key={r.inst} className="mus-row-label" style={{ opacity: r.op }}>
+                  <span
+                    className="mus-row-shape"
+                    style={{
+                      width: r.w,
+                      height: r.h,
+                      borderRadius: r.r,
+                      clipPath: r.clip,
+                      background: r.bg,
+                    }}
+                  />
+                  {INSTR[r.inst].name}
+                </span>
+              ))}
+            </div>
+            <div ref={score} className="mus-field">
+              {mus.rows.map((r) => (
+                <span key={r.inst} className="mus-rule" style={{ top: r.top }} />
+              ))}
+              {mus.beats.map((b) => (
+                <span key={b.i} className="mus-beat" style={{ left: b.left }} />
+              ))}
+              {g.bars.map((b) => (
+                <span key={b.n} className="mus-bar" style={{ left: b.left }} />
+              ))}
+              {mus.marks.map((m) => (
+                <span
+                  key={m.key}
+                  data-ev={m.id}
+                  className={'mus-mark' + (m.ring ? ' mus-ring' : '')}
+                  style={
+                    {
+                      top: m.top,
+                      left: m.left,
+                      width: m.w,
+                      height: m.h,
+                      marginLeft: m.ml,
+                      marginTop: m.mt,
+                      borderRadius: m.r,
+                      clipPath: m.clip,
+                      background: m.bg,
+                      border: m.bd,
+                      opacity: m.op,
+                      '--col': m.col,
+                    } as CSSProperties
+                  }
+                />
+              ))}
+              {mus.hits.map((h) => (
+                <span
+                  key={h.id}
+                  data-ev={h.id}
+                  className="mus-hit"
+                  style={{ left: h.left, opacity: h.op }}
+                />
+              ))}
+              <span ref={playhead} className="ts-playhead" />
+            </div>
+          </>
+        )}
+        {!music && (
+          <>
+            <div className="ts-lanes">
+              <span style={{ opacity: lanes.pulse }}>Pulse</span>
+              <span className="ts-lane-expr" style={{ opacity: lanes.expr }}>
+                Expression
+              </span>
+            </div>
+            <div ref={score} className="ts-field">
+              <span className="ts-rule ts-rule--pulse" />
+              <span className="ts-rule ts-rule--expr" />
+              {g.bars.map((b) => (
+                <span key={b.n} className="ts-bar-line" style={{ left: b.left }} />
+              ))}
+              {g.pulse.map((p) => (
+                <span
+                  key={p.id}
+                  data-ev={p.id}
+                  className="ts-pulse"
+                  style={{
+                    left: p.left,
+                    width: p.size,
+                    height: p.size,
+                    marginLeft: p.margin,
+                    marginTop: p.margin,
+                    background: p.bg,
+                    opacity: p.op,
+                  }}
+                />
+              ))}
+              {g.expr.map((x) => (
+                <span
+                  key={x.id}
+                  data-ev={x.id}
+                  className={'ts-expr' + (x.glow ? ' ts-expr--glow' : '')}
+                  style={{
+                    top: x.top,
+                    left: x.left,
+                    width: x.w,
+                    height: x.h,
+                    marginLeft: x.ml,
+                    marginTop: x.mt,
+                    borderRadius: x.r,
+                    clipPath: x.clip,
+                    opacity: x.op,
+                  }}
+                />
+              ))}
+              {g.hits.map((h) => (
+                <span
+                  key={h.id}
+                  data-ev={h.id}
+                  className="ts-hit"
+                  style={{ left: h.left, opacity: h.op }}
+                >
+                  <span className="ts-hit-dot ts-hit-dot--top" />
+                  <span className="ts-hit-dot ts-hit-dot--bottom" />
+                </span>
+              ))}
+              <span ref={playhead} className="ts-playhead" />
+            </div>
+          </>
+        )}
         <span />
         <div className="ts-legend">
           {st.score.legend.map((l, i) => {

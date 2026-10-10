@@ -13,6 +13,7 @@ import {
 import { AudioEngine, type TriggerMeta } from './audioEngine';
 import { BAR_STEPS, LOOP_STEPS, MasterTransport } from './masterTransport';
 import { drawWrist } from './tactileView';
+import { Notation } from './notation';
 
 /** How early (in sixteenths) a hit may land and still count as the next downbeat (v7 value). */
 const REC_EARLY = 0.6;
@@ -79,6 +80,8 @@ export class ResonanceController {
   private host: ControllerHost;
   sim: Sim;
   field: ParticleField;
+  /** v8 visual music notation drawn into the particle canvas (used only when enabled). */
+  notation: Notation;
   hap = new R.HapticRouter();
   audio = new AudioEngine();
   transport: MasterTransport;
@@ -133,6 +136,10 @@ export class ResonanceController {
     const screen = host.props.startScreen || 'welcome';
     this.sim = createSim(screen, reduced);
     this.field = new ParticleField(this.sim);
+    this.notation = new Notation(this.sim);
+    if (host.props.notation) {
+      this.field.overlay = (ctx, t) => this.notation.draw(ctx, t);
+    }
     this.transport = new MasterTransport({ onStep: this.onStep, onEvent: this.dispatch });
     if (import.meta.env.DEV) {
       (window as unknown as { __resonance?: ResonanceController }).__resonance = this;
@@ -507,6 +514,9 @@ export class ResonanceController {
     };
     s.heldNote = slot;
     this.melodyVisual(h.x, h.y, R.noteName(midi), !slur, false, acc);
+    if (this.host.props.notation) {
+      this.notation.instMark(inst, h.x, h.y, vel, acc);
+    }
     if (this.audible()) {
       this.noteStart(midi, vel, inst);
     }
@@ -584,6 +594,9 @@ export class ResonanceController {
       decay: 0.022,
       hot: drum === 'kick' ? 1 : 0,
     });
+    if (this.host.props.notation && drum !== 'kick') {
+      this.notation.instMark(drum, h.x, h.y, vel, false);
+    }
     if (s.ripples.length > 16) {
       s.ripples.shift();
     }
@@ -999,6 +1012,20 @@ export class ResonanceController {
         this.sendHaptics([R.holdCmd(s.live.vel)], 'Expression · held note');
       }
     }
+    // v8 notation: a live held melodic note leaves a trail behind the hand, then dissolves.
+    if (s.live && s.live.holdSent && this.host.props.notation && s.live.inst !== 'drums') {
+      if (s.trailOff) {
+        s.trail = [];
+        s.trailOff = 0;
+      }
+      s.trail.push([h.x, h.y, t]);
+      if (s.trail.length > 160) {
+        s.trail.shift();
+      }
+      s.trailInst = s.live.inst;
+    } else if (s.trail.length && !s.trailOff) {
+      s.trailOff = t;
+    }
     if (s.live && s.live.holdSent && !s.reduced && t - (s.holdRipT || 0) > 0.4) {
       s.holdRipT = t;
       s.ripples.push({ x: h.x, y: h.y, r: 0, v: 2.2, w: 36, s: 0.5, life: 1, decay: 0.02 });
@@ -1245,6 +1272,7 @@ export class ResonanceController {
           drum: e.drum,
           metro: e.metro,
           step: e.step,
+          slot: e.slot ?? 0,
           dur: e.duration ?? 0,
           vel: e.velocity ?? 0.6,
           legato: e.articulation === 'legato',
@@ -1430,8 +1458,148 @@ export class ResonanceController {
         ];
   }
 
-  /** Particles: beat, downbeat, drum hit, bass / keys / lead note, flick hit (v7 visualFor). */
+  /**
+   * v8 visual notation for a loop event: rhythm = waves, pitch = height, duration = ribbons,
+   * dynamics = size / spread, instrument = shape. Runs from the transport's dispatch, so it
+   * continues in Feel only. With notation off, the v7 visuals below.
+   */
   private visualFor(ev: MusicEvent) {
+    if (!this.host.props.notation) {
+      this.visualForV7(ev);
+      return;
+    }
+    const s = this.sim;
+    const W = s.W;
+    const H = s.H;
+    const len = this.transport.len;
+    const rm = (s.reduced ? 0.4 : 1) * (s.focus ? 0.55 : 1);
+    const v = ev.velocity || 0.7;
+    const k = 0.6 + 0.4 * v;
+    const x = W * (0.16 + 0.68 * ((ev.t || 0) / len));
+    const cap = () => {
+      if (s.ripples.length > 18) {
+        s.ripples.splice(0, s.ripples.length - 18);
+      }
+    };
+
+    // Metronome: beat dots; the downbeat makes the field "breathe".
+    if (ev.metro) {
+      s.beatInBar = ev.beat - 1;
+      s.beatT = s.t;
+      if (ev.accent) {
+        s.breathT = s.t;
+        s.breathK = rm;
+        s.boost = Math.min(0.5, s.boost + 0.06);
+      }
+      cap();
+      return;
+    }
+
+    // Drums: kick = a wide low wave; snare = a quick sharp ring + spokes; hat = a small grain burst.
+    if (ev.layer === 'drum') {
+      const d = ev.drum;
+      const y = d === 'kick' ? H * 0.8 : d === 'snare' ? H * 0.6 : H * 0.4;
+      if (d === 'kick') {
+        s.ripples.push({
+          x,
+          y,
+          r: 0,
+          v: s.reduced ? 3 : 4.6,
+          w: 100,
+          s: 1.6 * k * rm,
+          life: 1,
+          decay: 0.016,
+          hot: 1,
+        });
+        s.boost = Math.min(0.5, s.boost + 0.04 * k);
+      } else if (d === 'snare') {
+        s.ripples.push({
+          x,
+          y,
+          r: 0,
+          v: s.reduced ? 4 : 7.5,
+          w: 24,
+          s: 1.2 * k * rm,
+          life: 1,
+          decay: 0.036,
+        });
+      } else {
+        s.ripples.push({ x, y, r: 0, v: 3.2, w: 14, s: 0.5 * k * rm, life: 1, decay: 0.05 });
+      }
+      if (d && d !== 'kick') {
+        this.notation.instMark(d, x, y, v, ev.accent);
+      }
+      cap();
+      return;
+    }
+
+    // Melodic notes: height = pitch, ripple width/size = instrument and dynamics,
+    // held notes become ribbons for their duration.
+    if (ev.layer === 'note' || ev.layer === 'melody') {
+      const inst = ev.inst || 'lead';
+      const y = this.yForSlot(ev.slot ?? 0);
+      const dur = Math.min(ev.duration || 0.2, 3.5);
+      const kk = k * (ev.accent ? 1.2 : 1);
+      if (inst === 'bass') {
+        s.ripples.push({
+          x,
+          y,
+          r: 0,
+          v: s.reduced ? 2.2 : 3,
+          w: 140,
+          s: 0.85 * kk * rm,
+          life: 1,
+          decay: 0.008,
+          col: '169,155,255',
+        });
+      } else if (inst === 'keys') {
+        s.ripples.push({
+          x,
+          y,
+          r: 0,
+          v: s.reduced ? 1.8 : 2.4,
+          w: 70,
+          s: 0.9 * kk * rm,
+          life: 1,
+          decay: 0.01,
+          col: '127,224,236',
+        });
+      } else {
+        s.ripples.push({ x, y, r: 0, v: 5, w: 40, s: 1.3 * kk * rm, life: 1, decay: 0.02, hot: 1 });
+      }
+      this.notation.instMark(inst, x, y, v, ev.accent);
+      s.noteFlash = 1;
+      if (ev.articulation === 'legato') {
+        s.ribbons.push({
+          inst,
+          x0: x,
+          y,
+          t0: s.t,
+          end: s.t + dur,
+          sp: (0.68 * W) / len,
+          v,
+          ph: Math.random() * 6.28,
+        });
+        if (s.ribbons.length > 8) {
+          s.ribbons.shift();
+        }
+        s.holds.push({ x, y, end: s.t + dur });
+        if (s.holds.length > 4) {
+          s.holds.shift();
+        }
+      }
+      cap();
+      return;
+    }
+
+    if (ev.layer === 'hit') {
+      this.notation.instMark('flick', x, H * 0.5, 1, true);
+    }
+    this.visualForV7(ev);
+  }
+
+  /** Particles: beat, downbeat, drum hit, bass / keys / lead note, flick hit (v7 visualFor). */
+  private visualForV7(ev: MusicEvent) {
     const s = this.sim;
     const W = s.W;
     const H = s.H;
