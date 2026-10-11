@@ -1,4 +1,6 @@
 import { useSyncExternalStore } from 'react';
+import type { ControllerHost } from '../core/controller';
+import { CameraPreview } from '../ui/CameraPreview';
 import type { ScreenProps } from './types';
 import './Tutorial.css';
 
@@ -28,102 +30,119 @@ const TUT_HINT_CAM = [
  * Four-step gesture tutorial.
  * The ghost hand on the canvas demonstrates each step (controller.step).
  */
-export function Tutorial({ st, setState, ui }: ScreenProps) {
+export function Tutorial({
+  st,
+  setState,
+  ui,
+  cam: { video: camVideo, overlay: camOverlay },
+}: ScreenProps & { cam: ControllerHost['cam'] }) {
   const u = useSyncExternalStore(ui.subscribe, ui.get);
   const step = st.step;
   const hints = st.track === 'on' && st.cam === 'live' ? TUT_HINT_CAM : TUT_HINT;
   const pinchGap = u.pinch ? '1px' : '10px';
 
   return (
-    <div className="tut-wrap">
-      <div data-avoid="1" role="dialog" aria-label="Gesture tutorial" className="tut">
-        <div className="tut-head">
-          <span className="tut-count mono">Step {step + 1} of 4</span>
-          <div className="tut-segs">
-            {[0, 1, 2, 3].map((i) => (
-              <span
-                key={i}
-                className="tut-seg"
-                style={{ background: i <= step ? '#ece6d8' : 'rgba(236,230,216,.2)' }}
-              />
-            ))}
-          </div>
+    <>
+      {/* The camera starts here ("Enter the studio"), so show what it sees while learning the
+          gestures: hand in frame, skeleton, pinch. Demo mode (no camera) shows nothing. */}
+      {st.cam === 'live' && (
+        <div className="cam-corner">
+          <CameraPreview st={st} u={u} videoRef={camVideo} overlayRef={camOverlay} />
         </div>
-        <div className="tut-body">
-          <div className="tut-icon">
-            {step === 0 && (
-              <>
-                <span className="tut-rail" />
-                <span className="tut-rail-dot" style={{ top: 14 + (1 - u.slot / 5) * 40 + 'px' }} />
-              </>
-            )}
-            {step === 1 && (
-              <div className="tut-pinch" style={{ gap: pinchGap }}>
-                <span className="tut-pinch-dot" />
-                <span className="tut-pinch-dot tut-pinch-dot--cyan" />
-              </div>
-            )}
-            {step === 2 && (
-              <div className="tut-bars">
-                {[0, 1, 2, 3, 4].map((i) => (
+      )}
+      <div className="tut-wrap">
+        <div data-avoid="1" role="dialog" aria-label="Gesture tutorial" className="tut">
+          <div className="tut-head">
+            <span className="tut-count mono">Step {step + 1} of 4</span>
+            <div className="tut-segs">
+              {[0, 1, 2, 3].map((i) => (
+                <span
+                  key={i}
+                  className="tut-seg"
+                  style={{ background: i <= step ? '#ece6d8' : 'rgba(236,230,216,.2)' }}
+                />
+              ))}
+            </div>
+          </div>
+          <div className="tut-body">
+            <div className="tut-icon">
+              {step === 0 && (
+                <>
+                  <span className="tut-rail" />
                   <span
-                    key={i}
-                    className="tut-bar"
-                    style={{
-                      height: 6 + i * 5 + 'px',
-                      background: u.energy > i / 5 + 0.02 ? '#7fe0ec' : 'rgba(236,230,216,.2)',
-                    }}
+                    className="tut-rail-dot"
+                    style={{ top: 14 + (1 - u.slot / 5) * 40 + 'px' }}
                   />
-                ))}
-              </div>
-            )}
-            {step === 3 && (
-              <div className="tut-motors" aria-hidden="true">
-                <span className="tut-motor" />
-                <span className="tut-motor tut-motor--r" />
-              </div>
-            )}
+                </>
+              )}
+              {step === 1 && (
+                <div className="tut-pinch" style={{ gap: pinchGap }}>
+                  <span className="tut-pinch-dot" />
+                  <span className="tut-pinch-dot tut-pinch-dot--cyan" />
+                </div>
+              )}
+              {step === 2 && (
+                <div className="tut-bars">
+                  {[0, 1, 2, 3, 4].map((i) => (
+                    <span
+                      key={i}
+                      className="tut-bar"
+                      style={{
+                        height: 6 + i * 5 + 'px',
+                        background: u.energy > i / 5 + 0.02 ? '#7fe0ec' : 'rgba(236,230,216,.2)',
+                      }}
+                    />
+                  ))}
+                </div>
+              )}
+              {step === 3 && (
+                <div className="tut-motors" aria-hidden="true">
+                  <span className="tut-motor" />
+                  <span className="tut-motor tut-motor--r" />
+                </div>
+              )}
+            </div>
+            <div className="tut-text">
+              <h2 className="tut-title serif">{TUT[step]}</h2>
+              <p className="tut-hint">{hints[step]}</p>
+              {step === 0 && (
+                <p className="tut-now mono">
+                  Now · {u.name} · degree {u.deg}
+                </p>
+              )}
+              {step === 3 && (
+                <p className="tut-note">
+                  This prototype uses two tactile channels. Future wristbands could use additional
+                  motors to separate more musical layers.
+                </p>
+              )}
+            </div>
           </div>
-          <div className="tut-text">
-            <h2 className="tut-title serif">{TUT[step]}</h2>
-            <p className="tut-hint">{hints[step]}</p>
-            {step === 0 && (
-              <p className="tut-now mono">
-                Now · {u.name} · degree {u.deg}
-              </p>
-            )}
-            {step === 3 && (
-              <p className="tut-note">
-                This prototype uses two tactile channels. Future wristbands could use additional
-                motors to separate more musical layers.
-              </p>
-            )}
-          </div>
-        </div>
-        <div className="tut-foot">
-          <button onClick={() => setState({ screen: 'tempo' })} className="tut-skip">
-            Skip tutorial
-          </button>
-          <div className="tut-nav">
-            <button
-              onClick={() => setState({ step: Math.max(0, step - 1) })}
-              disabled={step === 0}
-              className="tut-back"
-              style={{ opacity: step === 0 ? 0.35 : 1 }}
-            >
-              Back
+          <div className="tut-foot">
+            <button onClick={() => setState({ screen: 'tempo' })} className="tut-skip">
+              Skip tutorial
             </button>
-            <button
-              onClick={() =>
-                step === 3 ? setState({ screen: 'tempo' }) : setState({ step: step + 1 })
-              }
-              className="tut-next"
-            >
-              {step === 3 ? 'Set your tempo' : 'Next'}
-            </button>
+            <div className="tut-nav">
+              <button
+                onClick={() => setState({ step: Math.max(0, step - 1) })}
+                disabled={step === 0}
+                className="tut-back"
+                style={{ opacity: step === 0 ? 0.35 : 1 }}
+              >
+                Back
+              </button>
+              <button
+                onClick={() =>
+                  step === 3 ? setState({ screen: 'tempo' }) : setState({ step: step + 1 })
+                }
+                className="tut-next"
+              >
+                {step === 3 ? 'Set your tempo' : 'Next'}
+              </button>
+            </div>
           </div>
         </div>
       </div>
-    </div>
+    </>
   );
 }

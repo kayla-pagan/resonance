@@ -4,6 +4,7 @@ import { INSTR, type InstKey } from '../core/engine';
 import type { AppState } from '../core/appState';
 import { availableInstruments } from '../core/appState';
 import { HitDots } from '../ui/Dots';
+import { CameraPreview } from '../ui/CameraPreview';
 import { StudioDock, StudioTransport } from './StudioTransport';
 import { MutedHero, TactileModule, WristbandPopover } from './Tactile';
 import type { ControllerHost, TactileRefs } from '../core/controller';
@@ -171,18 +172,6 @@ export function Studio({
         : '';
   const bandDot = BAND_DOT[st.bandHw] || BAND_DOT['not-connected'];
   const pvShow = st.showPreview && !(mob && st.pvMobHidden);
-  const camCaption =
-    st.cam === 'live'
-      ? st.track === 'on'
-        ? st.handIn
-          ? 'Tracking'
-          : 'No hand in view'
-        : st.track === 'loading'
-          ? 'Loading hand model'
-          : 'Tracking unavailable'
-      : st.cam === 'unavailable'
-        ? 'Cursor control'
-        : 'Cursor hand';
   const modeShort =
     inst === 'drums'
       ? camHit
@@ -358,30 +347,13 @@ export function Studio({
           </div>
         )}
         {pvShow && (
-          <div data-avoid="1" className="studio-preview">
-            {st.cam === 'live' && (
-              <>
-                <video ref={camVideo} autoPlay muted playsInline className="studio-cam-video" />
-                <canvas ref={camOverlay} className="studio-cam-overlay" />
-              </>
-            )}
-            {st.cam === 'unavailable' && <span className="studio-cam-none">No camera</span>}
-            {!camHit && (
-              <div
-                className="studio-sim-hand"
-                style={{
-                  left: (u.nx * 100).toFixed(1) + '%',
-                  top: (u.ny * 100).toFixed(1) + '%',
-                  opacity: u.active ? 1 : 0.35,
-                  gap: u.pinch ? '1px' : '10px',
-                }}
-              >
-                <span className="studio-sim-dot" />
-                <span className="studio-sim-dot studio-sim-dot--cyan" />
-              </div>
-            )}
-            <span className="studio-preview-caption">{camCaption}</span>
-          </div>
+          <CameraPreview
+            st={st}
+            u={u}
+            videoRef={camVideo}
+            overlayRef={camOverlay}
+            className="studio-preview"
+          />
         )}
       </div>
 

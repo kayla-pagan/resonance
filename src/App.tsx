@@ -94,8 +94,8 @@ export default function App() {
         <span>Resonance</span>
       </div>
       {st.screen === 'welcome' && <Landing onEnterStudio={enterStudio} onEnterDemo={enterDemo} />}
-      {st.screen === 'tutorial' && <Tutorial {...screenProps} />}
-      {st.screen === 'tempo' && <TempoSetup {...screenProps} />}
+      {st.screen === 'tutorial' && <Tutorial {...screenProps} cam={cam} />}
+      {st.screen === 'tempo' && <TempoSetup {...screenProps} cam={cam} />}
       {st.screen === 'studio' && (
         <Studio {...screenProps} stageRef={stageRef} tactile={tactile} cam={cam} />
       )}
