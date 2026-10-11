@@ -5,8 +5,8 @@ import {
   UiStore,
   type AppState,
   type StatePatch,
-} from './resonance/appState';
-import { ResonanceController, type ControllerHost, type TactileRefs } from './resonance/controller';
+} from './core/appState';
+import { ResonanceController, type ControllerHost, type TactileRefs } from './core/controller';
 import { Landing } from './screens/Landing';
 import { Tutorial } from './screens/Tutorial';
 import { TempoSetup } from './screens/TempoSetup';

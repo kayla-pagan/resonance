@@ -1,5 +1,5 @@
-import type { AppState, ScoreView } from '../resonance/appState';
-import type { InstKey } from '../resonance/engine';
+import type { AppState, ScoreView } from '../core/appState';
+import type { InstKey } from '../core/engine';
 
 const pct = (v: number) => (v * 100).toFixed(2) + '%';
 

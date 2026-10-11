@@ -1,6 +1,6 @@
 import type { RefObject } from 'react';
-import type { AppState, StatePatch, UiStore } from '../resonance/appState';
-import type { ResonanceController } from '../resonance/controller';
+import type { AppState, StatePatch, UiStore } from '../core/appState';
+import type { ResonanceController } from '../core/controller';
 
 export interface ScreenProps {
   st: AppState;

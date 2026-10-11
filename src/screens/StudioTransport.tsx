@@ -1,6 +1,6 @@
 import type { RefObject } from 'react';
-import type { AppState, StatePatch, Ui } from '../resonance/appState';
-import type { ResonanceController, TactileRefs } from '../resonance/controller';
+import type { AppState, StatePatch, Ui } from '../core/appState';
+import type { ResonanceController, TactileRefs } from '../core/controller';
 import { beatDot } from '../ui/beats';
 import { PlaybackModes, TactileScore } from './Tactile';
 import { transportView, type StatusLook } from './transportView';
