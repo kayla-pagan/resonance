@@ -54,7 +54,7 @@ The app's patterns:
 | ------------------------------- | ------------------------------- |
 | Count-in beat 1, both motors    | `R,255,140` + `E,255,140`       |
 | Count-in beats 2–4, both motors | `R,140,45` + `E,140,45`         |
-| Kick / snare                    | `R,…,100` / `R,…,60`            |
+| Kick / snare / hat              | `R,…,100` / `R,…,60` / `R,…,35` |
 | Bass note / held note           | `E,…,110` / `E,…,<note length>` |
 
 ## Tuning (top of the sketch)

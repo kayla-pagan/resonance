@@ -327,7 +327,8 @@ export function buildScore(loop: LoopDef, q: string): Score {
 }
 
 /* ---- Tactile grammar for musical events (playback) ----
-   KICK / SNARE  left motor ('rhythm')      strength from velocity; hats are heard, not felt
+   KICK / SNARE  left motor ('rhythm')      strength from velocity
+   HAT           left motor                 a light, short tick (well below the snare)
    BASS NOTE     right motor ('expression') short note, or held for the note's length; accents strong
    KEYS / LEAD   no motor in this two-motor prototype (audio + visual notation only)
    The same rules give the groove felt while overdubbing. The both-motor metronome (count-in,
@@ -347,7 +348,8 @@ export function compile(ev: EventLike): HapticCmd[] {
       ? [{ channel: 'rhythm', intensity: Math.min(1, 0.7 + 0.3 * dv), duration: 100, type: 'drum' }]
       : ev.drum === 'snare'
         ? [{ channel: 'rhythm', intensity: 0.45 + 0.3 * dv, duration: 60, type: 'drum' }]
-        : [];
+        : // Hat: a light, short tick, well below the snare, so busy hats don't blur the groove.
+          [{ channel: 'rhythm', intensity: 0.2 + 0.15 * dv, duration: 35, type: 'drum' }];
   }
   if (ev.layer === 'note') {
     // Only Bass has a motor; Keys and Lead are heard and seen, not felt.
@@ -405,7 +407,7 @@ export function describe(ev: EventLike) {
         : '';
   }
   if (ev.layer === 'drum') {
-    return ev.drum === 'hat' ? '' : 'Drums · ' + ev.drum;
+    return 'Drums · ' + ev.drum;
   }
   if (ev.layer === 'note') {
     if (ev.inst !== 'bass') {

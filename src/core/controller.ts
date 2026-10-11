@@ -277,8 +277,8 @@ export class ResonanceController {
   }
 
   /**
-   * Whether the committed layers would move a motor in playback: any unmuted Drums kick / snare
-   * or Bass note (the same compile() rule playback uses; hats, Keys and Lead are not felt).
+   * Whether the committed layers would move a motor in playback: any unmuted Drums hit or Bass
+   * note (the same compile() rule playback uses; Keys and Lead are not felt).
    */
   private hasTactileGroove() {
     return this.perf.layers.some(

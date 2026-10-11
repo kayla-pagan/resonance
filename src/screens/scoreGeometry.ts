@@ -22,7 +22,7 @@ export const LEGEND_SHAPE: Record<
 
 /**
  * Tactile score geometry: two lanes, one per motor of the two-motor prototype.
- * Drums lane = kick / snare (hats are heard, not felt, so drawn faint); Bass lane = bass notes,
+ * Drums lane = kick / snare / hat, sized by how strongly each is felt; Bass lane = bass notes,
  * bars as long as held notes. Recorded layers are never dimmed while another is recorded, so the
  * performer can follow the composition they are overdubbing.
  * While the metronome is felt (count-in, or a take with no committed Drums / Bass), both lanes
@@ -59,13 +59,14 @@ export function scoreGeometry(score: ScoreView, st: AppState) {
   const drums = score.marks
     .filter((m) => m.layer === 'drum')
     .map((m) => {
-      const size = m.drum === 'kick' ? 9 : m.drum === 'snare' ? 6 : 3;
+      // Size follows how strongly each drum is felt: kick > snare > hat (a light tick).
+      const size = m.drum === 'kick' ? 9 : m.drum === 'snare' ? 6 : 4;
       return {
         id: m.id,
         left: pct(m.t / L),
         size: size + 'px',
         margin: -size / 2 + 'px',
-        bg: m.drum === 'hat' ? 'rgba(236,230,216,.3)' : 'rgba(236,230,216,.72)',
+        bg: m.drum === 'hat' ? 'rgba(236,230,216,.6)' : 'rgba(236,230,216,.72)',
         op: (pOK ? 1 : 0.18) * dim(m),
         metro: false,
       };
