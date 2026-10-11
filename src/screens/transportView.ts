@@ -103,7 +103,7 @@ export function transportView(st: AppState, u: Ui) {
   const layerCount = nL === 1 ? '1 layer' : nL + ' layers';
   const bar =
     tr === 'ready'
-      ? 'Drums first'
+      ? 'Set the tempo'
       : tr === 'finding'
         ? st.pulse.msg
           ? 'Try again'
@@ -120,7 +120,7 @@ export function transportView(st: AppState, u: Ui) {
                 : st.bpm + ' BPM · ' + layerCount;
   const status: StatusLook = { ...(looks[key] || looks.ready), bar };
 
-  // Record button: find pulse → record drums → add a layer → complete (all four layers).
+  // Record button: find pulse → record a first layer (any instrument) → add a layer → complete.
   const complete = !busy && nL > 0 && !available.length;
   const primText =
     tr === 'ready'
@@ -132,7 +132,7 @@ export function transportView(st: AppState, u: Ui) {
           : busy
             ? 'Stop'
             : !nL
-              ? 'Record drums'
+              ? 'Record a layer'
               : complete
                 ? 'Complete'
                 : '+ Add layer';

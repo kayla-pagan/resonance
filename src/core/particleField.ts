@@ -136,7 +136,7 @@ export class ParticleField {
           0.08 +
             (running && s.screen === 'studio' ? 0.22 : 0) +
             s.energy * 0.32 +
-            (h.pinch ? 0.28 : 0) +
+            (h.pinch || s.hands[1].pinch ? 0.28 : 0) +
             s.boost,
         );
     s.intensity += (target * (s.silent ? 0.65 : 1) - s.intensity) * Math.min(1, 0.03 * dtk);
@@ -215,8 +215,10 @@ export class ParticleField {
     const hl = s.holds.filter((o) => o.end > t);
     s.holds = hl;
     const hs = hl.map((o) => [o.x, o.y]);
-    if (s.live && s.live.holdSent && ha > 0.01) {
-      hs.push([h.x, h.y]);
+    for (const hd of s.hands) {
+      if (hd.live && hd.live.holdSent && hd.amt * s.handScale > 0.01 && !s.focus) {
+        hs.push([hd.x, hd.y]);
+      }
     }
     const nh = hs.length;
     const HR = 160;
@@ -418,17 +420,22 @@ export class ParticleField {
     // v8 notation layer (instrument marks, held-note ribbons, live trail), when enabled.
     this.overlay?.(ctx, t);
 
-    // Hand glow and ring.
-    if (ha > 0.02) {
-      const gr = ctx.createRadialGradient(hx, hy, 0, hx, hy, 150);
-      gr.addColorStop(0, 'rgba(127,224,236,' + (0.06 + (h.pinch ? 0.05 : 0)) * ha * fa + ')');
+    // Hand glow and ring, for each hand in play (the second hand only appears with the camera;
+    // the sand's swirl follows the primary hand).
+    for (const hd of s.hands) {
+      const a = s.focus ? 0 : hd.amt * s.handScale;
+      if (a <= 0.02) {
+        continue;
+      }
+      const gr = ctx.createRadialGradient(hd.x, hd.y, 0, hd.x, hd.y, 150);
+      gr.addColorStop(0, 'rgba(127,224,236,' + (0.06 + (hd.pinch ? 0.05 : 0)) * a * fa + ')');
       gr.addColorStop(1, 'rgba(127,224,236,0)');
       ctx.fillStyle = gr;
-      ctx.fillRect(hx - 150, hy - 150, 300, 300);
-      ctx.strokeStyle = 'rgba(236,230,216,' + Math.min(0.5, 0.35 * ha * fa * 2) + ')';
+      ctx.fillRect(hd.x - 150, hd.y - 150, 300, 300);
+      ctx.strokeStyle = 'rgba(236,230,216,' + Math.min(0.5, 0.35 * a * fa * 2) + ')';
       ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.arc(hx, hy, h.pinch ? 8 : 15, 0, 6.2832);
+      ctx.arc(hd.x, hd.y, hd.pinch ? 8 : 15, 0, 6.2832);
       ctx.stroke();
     }
 

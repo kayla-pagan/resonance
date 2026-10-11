@@ -81,7 +81,14 @@ export interface Gather {
 /** [left, top, right, bottom, soft] in canvas coordinates. */
 export type AvoidRect = [number, number, number, number, number];
 
+/**
+ * One performing hand. Hand 0 is the primary hand (cursor, keyboard, tutorial ghost and the
+ * camera's first hand); hand 1 exists only for a second camera hand. Every piece of interaction
+ * state lives here, so one hand opening or leaving never touches the other's pinch or note.
+ */
 export interface Hand {
+  /** 0 = primary, 1 = second camera hand. */
+  idx: number;
   x: number;
   y: number;
   tx: number;
@@ -96,6 +103,49 @@ export interface Hand {
   ghostPinch: boolean;
   camPinch?: boolean;
   lastMove: number;
+  /** Movement energy of this hand (0..1); drives its own note / hit strength. */
+  energy: number;
+  /** This hand's sounding note, if any. */
+  live: LiveNote | null;
+  /** Pitch slot of this hand's held note (-1 = none), for slurs. */
+  heldNote: number;
+  /** Camera pinch hysteresis: closest distance while pinched, widest since the last pinch. */
+  pinchLo: number;
+  pinchHi: number;
+  /** Camera identity: MediaPipe handedness label this hand is following, and when last seen. */
+  camKey: string | null;
+  camSeen: number;
+  /** Last camera palm position (normalised), for matching when handedness is unavailable. */
+  camX: number;
+  camY: number;
+}
+
+export function createHand(idx: number): Hand {
+  return {
+    idx,
+    x: 0,
+    y: 0,
+    tx: 0,
+    ty: 0,
+    px: 0,
+    py: 0,
+    vx: 0,
+    vy: 0,
+    speed: 0,
+    amt: 0,
+    pinch: false,
+    ghostPinch: false,
+    lastMove: -99,
+    energy: 0,
+    live: null,
+    heldNote: -1,
+    pinchLo: Infinity,
+    pinchHi: Infinity,
+    camKey: null,
+    camSeen: -99,
+    camX: 0.5,
+    camY: 0.5,
+  };
 }
 export interface LiveNote {
   start: number;
@@ -126,6 +176,11 @@ export interface RecWindow {
   endStep: number;
   /** The layer is committed at endStep; late events inside the scheduler lookahead still land in it. */
   closing?: boolean;
+  /**
+   * Decided when the take begins: committed Drums / Bass give the wristband a groove to feel
+   * (true), otherwise the metronome carries on through the take (false).
+   */
+  groove?: boolean;
 }
 
 export interface Sim {
@@ -151,13 +206,11 @@ export interface Sim {
   muted: boolean;
   audioOn: boolean;
   mouseT: number;
-  heldNote: number;
   loop: null;
   handScale: number;
   handSize: number;
   clock: Clock | null;
   fired: Record<string, number>;
-  live: LiveNote | null;
   lastLive: null;
   recRaw: RawNote[];
   recBase: unknown[];
@@ -167,6 +220,7 @@ export interface Sim {
   silent: boolean;
   hideWrist: boolean;
   noHaptic: boolean;
+  /** Overall movement energy (the stronger hand), for the sand and the sound's brightness. */
   energy: number;
   spread: number;
   rec: RecWindow | null;
@@ -178,6 +232,8 @@ export interface Sim {
   beatT: number;
   holds: Hold[];
   lastFire: Record<Channel, number>;
+  /** Both performing hands; `hand` is hands[0]. */
+  hands: [Hand, Hand];
   hand: Hand;
   // v8 visual notation (empty / inactive when notation is off)
   marks: NoteMark[];
@@ -214,6 +270,7 @@ export interface Sim {
 }
 
 export function createSim(screen: Screen, reduced: boolean): Sim {
+  const hands: [Hand, Hand] = [createHand(0), createHand(1)];
   return {
     t: 0,
     W: 1,
@@ -236,13 +293,11 @@ export function createSim(screen: Screen, reduced: boolean): Sim {
     muted: false,
     audioOn: false,
     mouseT: -99,
-    heldNote: -1,
     loop: null,
     handScale: 1,
     handSize: 0.2,
     clock: null,
     fired: {},
-    live: null,
     lastLive: null,
     recRaw: [],
     recBase: [],
@@ -269,21 +324,8 @@ export function createSim(screen: Screen, reduced: boolean): Sim {
     breathT: -9,
     breathK: 0,
     lastFire: { rhythm: -9, expression: -9 },
-    hand: {
-      x: 0,
-      y: 0,
-      tx: 0,
-      ty: 0,
-      px: 0,
-      py: 0,
-      vx: 0,
-      vy: 0,
-      speed: 0,
-      amt: 0,
-      pinch: false,
-      ghostPinch: false,
-      lastMove: -99,
-    },
+    hands,
+    hand: hands[0],
     pp: { speed: 1, turb: 1, hues: [] },
     hueW: [],
     px: new Float32Array(0),

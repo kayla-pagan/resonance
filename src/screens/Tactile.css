@@ -43,6 +43,14 @@
     rgba(127, 224, 236, 0)
   );
 }
+/* Amber = timing: an edge lit by the metronome (set per frame by the controller). */
+.tact-edge.tact-edge--metro {
+  background: linear-gradient(
+    rgba(242, 189, 114, 0),
+    rgba(242, 189, 114, 0.85),
+    rgba(242, 189, 114, 0)
+  );
+}
 .tact-title {
   font-size: 10.5px;
   letter-spacing: 0.24em;
@@ -209,6 +217,11 @@
 .ts-pulse[data-on] {
   background: var(--ink) !important;
   box-shadow: 0 0 12px rgba(236, 230, 216, 0.9);
+}
+/* Amber = timing: a metronome beat lights amber, never cream. */
+.ts-pulse--metro[data-on] {
+  background: var(--amber) !important;
+  box-shadow: 0 0 12px rgba(242, 189, 114, 0.9);
 }
 .ts-expr[data-on] {
   background: var(--ink);

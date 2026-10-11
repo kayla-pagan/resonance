@@ -95,8 +95,8 @@ export function Studio({
   if (tr === 'ready') {
     guide = {
       eyebrow: 'Build your loop',
-      title: 'Start with rhythm.',
-      sub: 'Drums come first. Find your pulse to set the tempo for every layer.',
+      title: 'Start with any instrument.',
+      sub: 'Find your pulse to set the tempo for every layer.',
     };
   } else if (tr === 'finding') {
     guide = st.pulse.msg
@@ -120,7 +120,7 @@ export function Studio({
     guide = {
       eyebrow: st.viaPulse ? 'Pulse found.' : 'Tempo set.',
       title: st.bpm + ' BPM',
-      sub: 'Locked for the whole loop. Record four bars of drums next.',
+      sub: 'Locked for the whole loop. Choose any instrument to record first.',
       retry: true,
       retryText: 'Find again',
     };
@@ -241,7 +241,13 @@ export function Studio({
               : 'Count in',
       }
     : !nL && st.bpm
-      ? { num: '01', name: 'Drums', col: 'rgba(236,230,216,.55)', dot: 'transparent', text: 'Next' }
+      ? {
+          num: '01',
+          name: 'First layer',
+          col: 'rgba(236,230,216,.55)',
+          dot: 'transparent',
+          text: 'Next',
+        }
       : null;
 
   const closeOthers = { showKeys: false, showA11y: false, showChar: false, showBand: false };
@@ -477,7 +483,9 @@ export function Studio({
         <div className="studio-pick-wrap">
           <div data-avoid="1" role="dialog" aria-label="Add a layer" className="studio-pick">
             <div className="studio-pick-head">
-              <span className="studio-pick-title">Add a layer</span>
+              <span className="studio-pick-title">
+                {hasLoop ? 'Add a layer' : 'Choose your first layer'}
+              </span>
               <button onClick={() => setState({ pick: false })} className="studio-pick-cancel">
                 Cancel
               </button>
@@ -499,7 +507,9 @@ export function Studio({
               ))}
             </div>
             <span className="studio-pick-note">
-              Your loop keeps playing. One bar count-in, then four bars.
+              {hasLoop
+                ? 'Your loop keeps playing. One bar count-in, then four bars.'
+                : 'Any instrument can come first. One bar count-in, then four bars.'}
             </span>
           </div>
         </div>

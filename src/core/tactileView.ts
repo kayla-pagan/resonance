@@ -1,11 +1,15 @@
 import type { Channel } from './engine';
 
-/** Channel colours (v7 LCOL). */
+/** Channel colours (v7 LCOL): cream = Drums, cyan = Bass. */
 const LCOL: Record<Channel, string> = { expression: '127,224,236', rhythm: '236,230,216' };
+/** Amber = timing: a motor pulsing the metronome is drawn in this colour instead. */
+const AMBER = '242,189,114';
 
 export interface WristOptions {
   /** Current motor levels, 0..1, from the simulated transport. */
   levels: Record<Channel, number>;
+  /** Motors currently pulsing the metronome (drawn amber). */
+  metro?: Record<Channel, boolean>;
   /** Whether each channel is allowed by the current Feel mode. */
   allowed: Record<Channel, boolean>;
   /** Feel mode "off": both motors dimmed. */
@@ -84,7 +88,7 @@ export function drawWrist(cv: HTMLCanvasElement | null, o: WristOptions) {
   for (const [ch, a] of motors) {
     const allowed = !o.off && o.allowed[ch];
     const v = o.hidden ? 0 : o.levels[ch];
-    const col = LCOL[ch];
+    const col = o.metro?.[ch] ? AMBER : LCOL[ch];
     const px = cx + Math.cos(a * T) * rx;
     const py = cy + Math.sin(a * T) * ry + bw / 2;
     const r0 = 7 * k;
