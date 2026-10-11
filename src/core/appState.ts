@@ -23,6 +23,25 @@ export function availableInstruments(layers: { inst: InstKey }[]) {
 }
 
 /**
+ * What the wristband is carrying (mirrors controller.tactileRole), for labels and colours:
+ * 'metro' = timing (count-in, or a take with no committed Drums / Bass) — amber, Beat / Beat;
+ * 'groove' = a take over the committed Drums / Bass — Drums / Bass;
+ * 'composition' = playback and free play — Drums / Bass.
+ */
+export function tactileRole(st: {
+  transport: string;
+  recGroove: boolean;
+}): 'metro' | 'groove' | 'composition' {
+  if (st.transport === 'countin') {
+    return 'metro';
+  }
+  if (st.transport === 'recording') {
+    return st.recGroove ? 'groove' : 'metro';
+  }
+  return 'composition';
+}
+
+/**
  * React-owned application state.
  * Field names match the prototype's `this.state` so ported logic reads the same.
  */
@@ -59,6 +78,8 @@ export interface AppState {
   pick: boolean;
   clickOn: boolean;
   recInst: InstKey | null;
+  /** The current take feels the committed Drums / Bass groove (else the metronome continues). */
+  recGroove: boolean;
   pulse: { n: number; msg: string };
   layersVer: number;
   quant: Quant;
@@ -156,6 +177,7 @@ export function initialState(): AppState {
     pick: false,
     clickOn: true,
     recInst: null,
+    recGroove: false,
     pulse: { n: 0, msg: '' },
     layersVer: 0,
     quant: 'balanced',

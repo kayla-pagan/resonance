@@ -64,6 +64,8 @@ export class HandTracker {
   private disposed = false;
   /** Dev diagnostics: which delegate loaded, and detection count / total inference time. */
   stats = { delegate: '', detections: 0, inferMs: 0 };
+  /** MediaPipe handedness label ('Left' / 'Right') of each hand from the last poll, if known. */
+  sides: (string | null)[] = [];
 
   constructor(events: TrackerEvents) {
     this.events = events;
@@ -174,7 +176,11 @@ export class HandTracker {
     this.lastDet = now;
     this.lastVT = v.currentTime;
     try {
-      const hands = tk.detectForVideo(v, now).landmarks ?? [];
+      const res = tk.detectForVideo(v, now);
+      const hands = res.landmarks ?? [];
+      // Handedness gives each hand a stable identity across frames (used to keep per-hand state).
+      const hd = res.handedness ?? res.handednesses ?? [];
+      this.sides = hands.map((_, i) => hd[i]?.[0]?.categoryName ?? null);
       if (import.meta.env.DEV) {
         this.stats.detections++;
         this.stats.inferMs += performance.now() - now;

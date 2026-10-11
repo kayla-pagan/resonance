@@ -1,6 +1,8 @@
 /* Resonance engine (two-motor prototype).
    One MusicEvent feeds audio, particles, the score and the wristband.
-   Count-in / recording: both motors pulse the metronome together (see controller.metroHaptic).
+   Count-in: both motors pulse the metronome together (see controller.metroHaptic).
+   Recording: the committed Drums / Bass are felt as below, or the metronome continues if the
+   loop has none (controller.tactileRole). The layer being recorded never vibrates live.
    Playback: motor 1 (left, internal channel 'rhythm') = Drums;
              motor 2 (right, internal channel 'expression') = Bass.
    Keys and Lead have no motor in this prototype: they are heard and shown in the notation.
@@ -328,7 +330,8 @@ export function buildScore(loop: LoopDef, q: string): Score {
    KICK / SNARE  left motor ('rhythm')      strength from velocity; hats are heard, not felt
    BASS NOTE     right motor ('expression') short note, or held for the note's length; accents strong
    KEYS / LEAD   no motor in this two-motor prototype (audio + visual notation only)
-   The count-in / recording metronome (both motors) is built in controller.metroHaptic. */
+   The same rules give the groove felt while overdubbing. The both-motor metronome (count-in,
+   and takes with no committed Drums / Bass) is built in controller.metroHaptic. */
 export function compile(ev: EventLike): HapticCmd[] {
   if (ev.layer === 'rhythm') {
     if ((ev.step as number) % 4 !== 0) {
@@ -520,7 +523,12 @@ export class SimulatedHapticTransport extends HapticTransport {
     return r < 1 ? 1 - r : -1;
   }
 
-  levels(now: number) {
+  /**
+   * Current level of each motor. `kinds`, if given, receives each motor's strongest pulse type
+   * (e.g. 'beat' / 'downbeat' for the metronome), so the display can colour timing apart from
+   * musical events.
+   */
+  levels(now: number, kinds?: Record<Channel, string>) {
     const L: Record<Channel, number> = { rhythm: 0, expression: 0 };
     for (let i = this.pulses.length - 1; i >= 0; i--) {
       const p = this.pulses[i];
@@ -532,6 +540,9 @@ export class SimulatedHapticTransport extends HapticTransport {
       const v = e * p.intensity;
       if (v > L[p.channel]) {
         L[p.channel] = v;
+        if (kinds) {
+          kinds[p.channel] = p.type;
+        }
       }
     }
     return L;

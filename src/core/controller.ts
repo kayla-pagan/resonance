@@ -1,7 +1,7 @@
 import * as R from './engine';
 import type { Channel, HapticCmd, InstKey, MusicEvent, PerfLayer, RawNote } from './engine';
 import { ParticleField } from './particleField';
-import { createSim, type Sim, type Transport } from './sim';
+import { createSim, type Hand, type Sim, type Transport } from './sim';
 import {
   availableInstruments,
   type AppState,
@@ -111,12 +111,8 @@ export class ResonanceController {
   /** Camera + MediaPipe (imperative; landmarks never reach React). */
   private tracker: HandTracker;
   private camNoticeT = 0;
-  /** Closest thumb–index distance during the current camera pinch. */
-  private pinchLo = Infinity;
-  /** Widest thumb–index distance since the last camera pinch ended. */
-  private pinchHi = Infinity;
-  /** Dev builds only: per-detection pinch distance and pinch on/off, for tuning with real hands. */
-  pinchLog: { t: number; pd: number; pinch: boolean; ev: string }[] = [];
+  /** Dev builds only: per-detection, per-hand pinch distance and pinch on/off, for tuning. */
+  pinchLog: { t: number; hand: number; pd: number; pinch: boolean; ev: string }[] = [];
   private ps: {
     reduced: boolean;
     screen: string;
@@ -257,24 +253,63 @@ export class ResonanceController {
     return f === 'full' || f === ch;
   }
 
-  /** Count-in or recording: the wristband is the metronome and carries nothing else. */
+  /** Count-in or a take: live gestures never reach the motors. */
   keepingTime() {
     const tr = this.sim.transport;
     return tr === 'countin' || tr === 'recording';
   }
 
   /**
-   * Returns whether any command reached the motors. While keeping time, only the metronome
-   * (`metronome: true`) gets through: no drum, bass or held-note pulses during count-in / takes.
+   * What the wristband carries right now:
+   * - 'metro': the count-in, or a take with no committed tactile layer (both motors keep time);
+   * - 'groove': a take over committed Drums / Bass (the motors play that existing loop);
+   * - 'composition': playback / free play (Drums left, Bass right).
    */
-  sendHaptics(cmds: HapticCmd[], cue?: string, metronome = false): boolean {
+  tactileRole(): 'metro' | 'groove' | 'composition' {
+    const s = this.sim;
+    if (s.transport === 'countin') {
+      return 'metro';
+    }
+    if (s.transport === 'recording') {
+      return s.rec?.groove ? 'groove' : 'metro';
+    }
+    return 'composition';
+  }
+
+  /**
+   * Whether the committed layers would move a motor in playback: any unmuted Drums kick / snare
+   * or Bass note (the same compile() rule playback uses; hats, Keys and Lead are not felt).
+   */
+  private hasTactileGroove() {
+    return this.perf.layers.some(
+      (l) =>
+        !l.muted &&
+        l.raw.some(
+          (n) =>
+            R.compile({ layer: n.layer, inst: l.inst, drum: n.drum ?? null, velocity: n.vel })
+              .length > 0,
+        ),
+    );
+  }
+
+  /**
+   * Returns whether any command reached the motors. Live gestures (`scheduled` false) are
+   * dropped during a count-in or take, so the layer being recorded never vibrates. Loop events
+   * and the metronome were already decided at their schedule time (see dispatch).
+   */
+  sendHaptics(
+    cmds: HapticCmd[],
+    cue?: string,
+    opts: { scheduled?: boolean; metro?: boolean } = {},
+  ): boolean {
     const s = this.sim;
     if (s.noHaptic || !cmds || !cmds.length) {
       return false;
     }
-    if (!metronome && this.keepingTime()) {
+    if (!opts.scheduled && this.keepingTime()) {
       return false;
     }
+    const metronome = !!opts.metro;
     const out = cmds.filter((c) => this.chanAllowed(c.channel));
     if (!out.length) {
       return false;
@@ -458,30 +493,33 @@ export class ResonanceController {
     }
   };
 
-  pinchStart() {
+  /**
+   * A pinch (or click / key) on one hand. Both hands play the same active instrument, each with
+   * its own pinch, pitch, strength and held note; the guard is per hand, so a hand that is
+   * already pinching can never re-trigger, while the other hand stays free to play.
+   */
+  pinchStart(h: Hand = this.sim.hand) {
     const s = this.sim;
-    const h = s.hand;
     if (s.focus || h.pinch) {
       return;
     }
     h.pinch = true;
     h.lastMove = s.t;
     if (this.liveInst() === 'drums') {
-      this.drumHit();
+      this.drumHit(h);
     } else {
-      this.noteOn(this.slotAt(h.y), false);
+      this.noteOn(h, this.slotAt(h.y), false);
     }
   }
 
-  pinchEnd() {
+  pinchEnd(h: Hand = this.sim.hand) {
     const s = this.sim;
-    const h = s.hand;
     if (!h.pinch) {
       return;
     }
     h.pinch = false;
-    this.noteOff(false);
-    s.heldNote = -1;
+    this.noteOff(h, false);
+    h.heldNote = -1;
     s.ripples.push({
       x: h.x,
       y: h.y,
@@ -494,21 +532,20 @@ export class ResonanceController {
     });
   }
 
-  // Strength comes from body movement energy:
-  // big movement = louder note, stronger expression pulse.
-  liveVel() {
-    return Math.max(0.45, Math.min(1, 0.45 + this.sim.energy * 0.6));
+  // Strength comes from the playing hand's own movement energy:
+  // big movement = louder note, stronger touch.
+  liveVel(h: Hand = this.sim.hand) {
+    return Math.max(0.45, Math.min(1, 0.45 + h.energy * 0.6));
   }
 
-  noteOn(slot: number, slur: boolean) {
+  noteOn(h: Hand, slot: number, slur: boolean) {
     const s = this.sim;
-    const h = s.hand;
     const p = this.tone0();
     const inst = this.liveInst();
     const midi = R.midiFor(inst, slot, p);
-    const vel = this.liveVel();
+    const vel = this.liveVel(h);
     const acc = vel >= 0.85;
-    s.live = {
+    h.live = {
       start: s.t,
       startStep: this.transport.nowStep(),
       slot,
@@ -518,7 +555,7 @@ export class ResonanceController {
       holdSent: false,
       inst,
     };
-    s.heldNote = slot;
+    h.heldNote = slot;
     this.melodyVisual(h.x, h.y, R.noteName(midi), !slur, false, acc);
     if (this.host.props.notation) {
       this.notation.instMark(inst, h.x, h.y, vel, acc);
@@ -540,17 +577,28 @@ export class ResonanceController {
     }
   }
 
-  noteOff(slurring: boolean) {
+  noteOff(h: Hand, slurring: boolean) {
     const s = this.sim;
-    const n = s.live;
+    const n = h.live;
     if (!n) {
       return;
     }
     const dur = s.t - n.start;
-    if (n.holdFelt) {
+    const other = this.otherHand(h).live;
+    // The Bass motor holds while either hand holds a felt bass note.
+    if (n.holdFelt && !other?.holdFelt) {
       this.hap.send([R.releaseCmd('expression')]);
     }
-    this.noteEnd(n.midi, n.inst);
+    if (other && other.inst === n.inst && (n.inst === 'bass' || other.midi === n.midi)) {
+      // The other hand still sounds this voice: Bass is monophonic, so it returns to the other
+      // hand's note; Keys / Lead release by pitch, so a shared pitch keeps sounding.
+      // (Only if this note was the one sounding, i.e. the newer of the two.)
+      if (n.inst === 'bass' && other.midi !== n.midi && n.start >= other.start && this.audible()) {
+        this.noteStart(other.midi, other.vel, 'bass');
+      }
+    } else {
+      this.noteEnd(n.midi, n.inst);
+    }
     const art =
       slurring || n.slur ? 'legato' : dur < 0.22 ? 'staccato' : dur > 0.5 ? 'legato' : 'normal';
     if (!n.done) {
@@ -559,11 +607,26 @@ export class ResonanceController {
         n.startStep,
       );
     }
-    s.live = null;
+    h.live = null;
   }
 
-  // Which voice receives live gestures. Drums until a loop exists;
-  // then the layer being recorded or the last one chosen.
+  private otherHand(h: Hand) {
+    return this.sim.hands[h.idx ? 0 : 1];
+  }
+
+  /** Release every hand's pinch (arming a take, pausing). */
+  private releaseHands() {
+    for (const h of this.sim.hands) {
+      if (h.pinch) {
+        h.camPinch = false;
+        h.ghostPinch = false;
+        this.pinchEnd(h);
+      }
+    }
+  }
+
+  // Which voice receives live gestures (both hands play it). Tempo finding uses drum hits;
+  // otherwise the layer being recorded or the last one chosen (Drums until one is chosen).
   liveInst() {
     const s = this.sim;
     if (s.screen === 'tempo') {
@@ -576,18 +639,17 @@ export class ResonanceController {
       return s.rec.inst;
     }
     const tr = s.transport;
-    if (tr === 'ready' || tr === 'finding' || !this.perf.layers.length) {
+    if (tr === 'ready' || tr === 'finding') {
       return 'drums';
     }
     return s.inst || 'drums';
   }
 
-  drumHit() {
+  drumHit(h: Hand = this.sim.hand) {
     const s = this.sim;
-    const h = s.hand;
     const slot = this.slotAt(h.y);
     const drum = R.DRUM_OF_SLOT[slot];
-    const vel = this.liveVel();
+    const vel = this.liveVel(h);
     const rm = s.reduced ? 0.4 : 1;
     s.ripples.push({
       x: h.x,
@@ -914,59 +976,68 @@ export class ResonanceController {
       h.lastMove = t;
     }
 
-    // Hand smoothing, velocity and presence.
+    // Each hand: smoothing, velocity, presence, its own held note and its own movement energy.
     s.handScale = s.screen === 'welcome' ? 0.55 : 1;
     const k = 1 - Math.pow(0.8, dtk);
-    h.x += (h.tx - h.x) * k;
-    h.y += (h.ty - h.y) * k;
-    h.vx = (h.x - h.px) / dtk;
-    h.vy = (h.y - h.py) / dtk;
-    h.px = h.x;
-    h.py = h.y;
-    h.speed += (Math.hypot(h.vx, h.vy) - h.speed) * 0.15;
-    const want = t - h.lastMove < 1.2 || h.pinch ? 1 : 0;
-    h.amt += (want - h.amt) * Math.min(1, (want ? 0.08 : 0.012) * dtk);
+    let energy = 0;
+    for (const hd of s.hands) {
+      hd.x += (hd.tx - hd.x) * k;
+      hd.y += (hd.ty - hd.y) * k;
+      hd.vx = (hd.x - hd.px) / dtk;
+      hd.vy = (hd.y - hd.py) / dtk;
+      hd.px = hd.x;
+      hd.py = hd.y;
+      hd.speed += (Math.hypot(hd.vx, hd.vy) - hd.speed) * 0.15;
+      const want = t - hd.lastMove < 1.2 || hd.pinch ? 1 : 0;
+      hd.amt += (want - hd.amt) * Math.min(1, (want ? 0.08 : 0.012) * dtk);
 
-    // Live held note: slur to a new slot, start the hold pulse, emit hold ripples.
-    if (h.pinch && s.live) {
-      const slot = this.slotAt(h.y);
-      if (slot !== s.heldNote) {
-        this.noteOff(true);
-        this.noteOn(slot, true);
+      // Live held note: slur to a new slot, start the hold pulse, emit hold ripples.
+      if (hd.pinch && hd.live) {
+        const slot = this.slotAt(hd.y);
+        if (slot !== hd.heldNote) {
+          this.noteOff(hd, true);
+          this.noteOn(hd, slot, true);
+        }
       }
-    }
-    if (s.live && !s.live.holdSent && t - s.live.start > 0.25) {
-      s.live.holdSent = true;
-      // Only Bass has a motor; Keys and Lead holds are heard and seen, not felt.
-      if (s.screen === 'studio' && s.live.inst === 'bass') {
-        s.live.holdFelt = this.sendHaptics([R.holdCmd(s.live.vel)], 'Bass · held note');
+      const n = hd.live;
+      if (n && !n.holdSent && t - n.start > 0.25) {
+        n.holdSent = true;
+        // Only Bass has a motor; Keys and Lead holds are heard and seen, not felt.
+        if (s.screen === 'studio' && n.inst === 'bass') {
+          n.holdFelt = this.sendHaptics([R.holdCmd(n.vel)], 'Bass · held note');
+        }
       }
+      if (n && n.holdSent && !s.reduced && t - (s.holdRipT || 0) > 0.4) {
+        s.holdRipT = t;
+        s.ripples.push({ x: hd.x, y: hd.y, r: 0, v: 2.2, w: 36, s: 0.5, life: 1, decay: 0.02 });
+        if (s.ripples.length > 16) {
+          s.ripples.shift();
+        }
+      }
+
+      const eRaw = hd.amt > 0.2 ? Math.min(1, hd.speed / 22) : 0;
+      hd.energy += (eRaw - hd.energy) * Math.min(1, (eRaw > hd.energy ? 0.08 : 0.02) * dtk);
+      energy = Math.max(energy, hd.energy);
     }
-    // v8 notation: a live held melodic note leaves a trail behind the hand, then dissolves.
-    if (s.live && s.live.holdSent && this.host.props.notation && s.live.inst !== 'drums') {
+    // The sand and the sound's brightness follow the more energetic hand.
+    s.energy = energy;
+
+    // v8 notation: a live held melodic note leaves a trail behind its hand, then dissolves
+    // (one trail: the primary hand's note, else the second hand's).
+    const th = s.hands.find((hd) => hd.live && hd.live.holdSent && hd.live.inst !== 'drums');
+    if (th && th.live && this.host.props.notation) {
       if (s.trailOff) {
         s.trail = [];
         s.trailOff = 0;
       }
-      s.trail.push([h.x, h.y, t]);
+      s.trail.push([th.x, th.y, t]);
       if (s.trail.length > 160) {
         s.trail.shift();
       }
-      s.trailInst = s.live.inst;
+      s.trailInst = th.live.inst;
     } else if (s.trail.length && !s.trailOff) {
       s.trailOff = t;
     }
-    if (s.live && s.live.holdSent && !s.reduced && t - (s.holdRipT || 0) > 0.4) {
-      s.holdRipT = t;
-      s.ripples.push({ x: h.x, y: h.y, r: 0, v: 2.2, w: 36, s: 0.5, life: 1, decay: 0.02 });
-      if (s.ripples.length > 16) {
-        s.ripples.shift();
-      }
-    }
-
-    // Movement energy.
-    const eRaw = h.amt > 0.2 ? Math.min(1, h.speed / 22) : 0;
-    s.energy += (eRaw - s.energy) * Math.min(1, (eRaw > s.energy ? 0.08 : 0.02) * dtk);
 
     // Recording boundaries and loop playback are driven by the master transport (onStep / dispatch).
 
@@ -977,7 +1048,9 @@ export class ResonanceController {
 
   pushUI = () => {
     const s = this.sim;
-    const h = s.hand;
+    // The readout follows the primary hand, or the second hand while it plays alone.
+    const [h0, h1] = s.hands;
+    const h = s.t - h0.lastMove > 0.6 && s.t - h1.lastMove < 0.6 ? h1 : h0;
     const slot = this.slotAt(h.y);
     const p = this.tone0();
     const inst = this.liveInst();
@@ -1243,7 +1316,14 @@ export class ResonanceController {
     const s = this.sim;
     const refs = this.host.tactile;
     const st = this.state;
-    const levels = this.hap.sim.levels(performance.now());
+    const kinds: Record<Channel, string> = { rhythm: '', expression: '' };
+    const levels = this.hap.sim.levels(performance.now(), kinds);
+    // Amber = timing: a motor whose strongest pulse is the metronome is drawn amber;
+    // cream (Drums) and cyan (Bass) only ever mean musical events.
+    const metro = {
+      rhythm: kinds.rhythm === 'beat' || kinds.rhythm === 'downbeat',
+      expression: kinds.expression === 'beat' || kinds.expression === 'downbeat',
+    };
     const off = st.feel === 'off';
     const allowed = {
       rhythm: this.chanAllowed('rhythm'),
@@ -1251,6 +1331,7 @@ export class ResonanceController {
     };
     drawWrist(refs.wrist.current, {
       levels,
+      metro,
       allowed,
       off,
       reduced: s.reduced,
@@ -1261,11 +1342,14 @@ export class ResonanceController {
     // Module edges answer their own motor; the whole border lifts only when both fire together.
     const p = off || !allowed.rhythm ? 0 : levels.rhythm;
     const e = off || !allowed.expression ? 0 : levels.expression;
-    if (refs.edgeL.current) {
-      refs.edgeL.current.style.opacity = (p * 0.8).toFixed(3);
-    }
-    if (refs.edgeR.current) {
-      refs.edgeR.current.style.opacity = (e * 0.8).toFixed(3);
+    for (const [el, v, m] of [
+      [refs.edgeL.current, p, metro.rhythm],
+      [refs.edgeR.current, e, metro.expression],
+    ] as const) {
+      if (el) {
+        el.style.opacity = (v * 0.8).toFixed(3);
+        el.classList.toggle('tact-edge--metro', m);
+      }
     }
     const box = refs.box.current;
     if (box) {
@@ -1308,10 +1392,13 @@ export class ResonanceController {
       }, time);
     }
     if (s.transport === 'countin' && abs >= rc.startStep) {
+      // The take begins: feel the committed groove if there is one, else keep the metronome.
+      // Decided here, before this step's events dispatch, and fixed for the whole take.
+      rc.groove = this.hasTactileGroove();
       s.transport = 'recording';
       this.transport.draw(() => {
         if (s.rec === rc) {
-          this.setState({ transport: 'recording' });
+          this.setState({ transport: 'recording', recGroove: !!rc.groove });
         }
       }, time);
     }
@@ -1345,11 +1432,14 @@ export class ResonanceController {
     if (this.audible()) {
       this.audioFor(ev, time);
     }
-    // Decide haptics now, while the transport state matches this event's time. While keeping
-    // time, the metronome is the only thing felt; the existing loop's layers are heard only.
+    // Decide haptics now, while the transport state matches this event's time:
+    // metronome role → only the metronome is felt; groove / composition → only loop events.
+    // Loop events here always come from committed layers: the take being recorded is not in
+    // the score until it commits, and its preview events (ev.rec) returned above.
+    const role = this.tactileRole();
     const haptic: [HapticCmd[], string] | null = ev.metro
       ? this.metroHaptic(ev)
-      : this.keepingTime()
+      : role === 'metro'
         ? null
         : [ev.haptic || R.compile(ev), R.describe(ev)];
     this.transport.draw(() => {
@@ -1358,7 +1448,7 @@ export class ResonanceController {
       }
       this.visualFor(ev);
       if (haptic) {
-        this.sendHaptics(haptic[0], haptic[1], !!ev.metro);
+        this.sendHaptics(haptic[0], haptic[1], { scheduled: true, metro: !!ev.metro });
       }
       s.fired[ev.id] = s.t;
       this.flashScore(ev);
@@ -1382,13 +1472,13 @@ export class ResonanceController {
   }
 
   /**
-   * Count-in / recording: both motors together are the tactile metronome — beat 1 strong and
-   * long, beats 2–4 short and lighter. Playback: no metronome at all; the left (Drums) and right
-   * (Bass) motors carry only the composition's own events. The v7 fallback that invented a
-   * beat-1 pulse when no drums were sounding is intentionally not carried over.
+   * Count-in, and takes with no committed Drums / Bass: both motors together are the tactile
+   * metronome — beat 1 strong and long, beats 2–4 short and lighter. A take over committed
+   * Drums / Bass feels that groove instead, and playback has no metronome at all. The v7
+   * fallback that invented a beat-1 pulse when no drums were sounding is not carried over.
    */
   private metroHaptic(ev: MusicEvent): [HapticCmd[], string] | null {
-    if (!this.keepingTime()) {
+    if (this.tactileRole() !== 'metro') {
       return null;
     }
     const both = (intensity: number, duration: number, type: string): HapticCmd[] => [
@@ -1686,9 +1776,7 @@ export class ResonanceController {
     };
     s.recRaw = [];
     s.inst = inst;
-    if (s.hand.pinch) {
-      this.pinchEnd();
-    }
+    this.releaseHands();
     // Armed until the count-in bar: onStep switches to 'countin' right before beat 1 dispatches.
     this.setTransport('armed', {
       pick: false,
@@ -1735,14 +1823,16 @@ export class ResonanceController {
     if (!rc) {
       return;
     }
-    const n = s.live;
-    if (n && !n.done) {
-      // A note still held at the boundary is captured up to the end of bar 4.
-      this.recEvent(
-        { layer: 'note', dur: Infinity, slot: n.slot, vel: n.vel, art: 'legato', accent: false },
-        n.startStep,
-      );
-      n.done = true;
+    for (const h of s.hands) {
+      const n = h.live;
+      if (n && !n.done) {
+        // A note still held at the boundary (on either hand) is captured up to the end of bar 4.
+        this.recEvent(
+          { layer: 'note', dur: Infinity, slot: n.slot, vel: n.vel, art: 'legato', accent: false },
+          n.startStep,
+        );
+        n.done = true;
+      }
     }
     rc.closing = true;
     this.perf.layers.push({ id: 'L' + ++this.lid, inst: rc.inst, raw: s.recRaw, muted: false });
@@ -1770,8 +1860,10 @@ export class ResonanceController {
     if (!rc || rc.closing) {
       return;
     }
-    if (s.live) {
-      s.live.done = true;
+    for (const h of s.hands) {
+      if (h.live) {
+        h.live.done = true;
+      }
     }
     s.rec = null;
     s.recRaw = [];
@@ -1784,7 +1876,7 @@ export class ResonanceController {
 
   // ---- transport controls
 
-  /** Record button / R key: find pulse → record drums → add a layer. */
+  /** Record button / R key: find pulse → choose any first layer → add the remaining layers. */
   primary = () => {
     const s = this.sim;
     const tr = s.transport;
@@ -1798,10 +1890,8 @@ export class ResonanceController {
     if (tr === 'armed' || tr === 'countin' || tr === 'recording') {
       return this.cancelRecording();
     }
-    if (!n) {
-      return this.armRecord('drums');
-    }
-    if (this.available().length) {
+    // Any instrument may come first: an empty composition opens the same picker as Add layer.
+    if (!n || this.available().length) {
       this.setState((x) => ({ pick: !x.pick, sheet: 'closed' }));
     }
   };
@@ -1845,6 +1935,8 @@ export class ResonanceController {
     s.noHaptic = false;
     this.applyGain();
     this.perf.layers = [];
+    this.releaseHands();
+    s.inst = 'drums';
     this.rebuildScore();
     s.boost = 0;
     this.setTransport('ready', {
@@ -1927,97 +2019,142 @@ export class ResonanceController {
       return;
     }
     this.tracker.drawHands(this.host.cam.overlay.current, all);
-    this.applyHands(all);
+    this.applyHands(all, this.tracker.sides);
   }
 
   /**
-   * v7 hand mapping. Drives the same simulated hand the cursor drives, and the same
-   * pinchStart / pinchEnd calls, so everything downstream is shared.
+   * v7 hand mapping, for up to two hands. Each detected hand drives its own performing hand
+   * (sim.hands[0] / [1]) through the same pinchStart / pinchEnd path the cursor uses, with its
+   * own pinch hysteresis, so both hands play the active instrument independently.
+   * `sides` are MediaPipe handedness labels, used (with palm position) to keep identity.
    */
-  applyHands(all: Hands) {
+  applyHands(all: Hands, sides: (string | null)[] = []) {
     const s = this.sim;
-    const h = s.hand;
     const now = performance.now();
-    const lm = all[0];
+    const dets = all.slice(0, 2).map((lm, i) => {
+      // Palm centre (normalised, unmirrored) and identity label.
+      let cx = 0;
+      let cy = 0;
+      for (const j of [0, 5, 9, 13, 17]) {
+        cx += lm[j].x;
+        cy += lm[j].y;
+      }
+      return { lm, cx: cx / 5, cy: cy / 5, side: sides[i] ?? null };
+    });
 
     // Two hands: spread between palms opens up the sound; eases back to neutral otherwise.
-    if (all.length > 1) {
-      const a = all[0][9];
-      const b = all[1][9];
+    if (dets.length > 1) {
+      const a = dets[0].lm[9];
+      const b = dets[1].lm[9];
       const target = Math.min(1, Math.max(0, (Math.hypot(a.x - b.x, a.y - b.y) - 0.15) / 0.5));
       s.spread += (target - s.spread) * 0.3;
     } else {
       s.spread *= 0.9;
     }
 
-    // Hand lost: release a camera pinch so notes never hang.
-    if (!lm) {
-      if (h.camPinch) {
-        h.camPinch = false;
-        this.pinchEnd();
+    const slots = this.matchHands(dets);
+    if (dets.length) {
+      // Camera takes priority over the cursor while a hand is in view (see onMove).
+      s.handSeen = s.t;
+      s.mouseT = s.t;
+      // The tutorial's demo hand may be mid-pinch when a real hand appears: end that pinch (as
+      // the cursor path does), otherwise it stays held and blocks every camera pinch.
+      if (s.hand.ghostPinch) {
+        s.hand.ghostPinch = false;
+        this.pinchEnd(s.hand);
       }
-      this.pinchHi = Infinity; // a hand that reappears already pinched pinches at once
-      return;
+      const lm0 = dets[0].lm;
+      s.handSize = Math.hypot(lm0[0].x - lm0[9].x, lm0[0].y - lm0[9].y) || 0.1;
     }
 
-    // Camera takes priority over the cursor while a hand is in view (see onMove).
-    s.handSeen = s.t;
+    s.hands.forEach((h, hi) => {
+      const di = slots[hi];
+      // Hand lost: release only this hand's camera pinch, so its note never hangs and the other
+      // hand keeps playing.
+      if (di < 0) {
+        if (h.camPinch) {
+          h.camPinch = false;
+          this.pinchEnd(h);
+        }
+        h.pinchHi = Infinity; // a hand that reappears already pinched pinches at once
+        return;
+      }
+      const d = dets[di];
+      const lm = d.lm;
+      h.camKey = d.side ?? h.camKey;
+      h.camSeen = s.t;
+      h.camX = d.cx;
+      h.camY = d.cy;
 
-    // Palm centre → mirrored position; height maps into the same six slots as the cursor.
-    let cx = 0;
-    let cy = 0;
-    for (const i of [0, 5, 9, 13, 17]) {
-      cx += lm[i].x;
-      cy += lm[i].y;
-    }
-    cx /= 5;
-    cy /= 5;
-    const nx = Math.max(0, Math.min(1, (1 - cx - 0.12) / 0.76));
-    const ny = Math.max(0, Math.min(1, (cy - 0.1) / 0.7));
-    h.tx = nx * s.W;
-    h.ty = s.band ? s.band[0] + ny * (s.band[1] - s.band[0]) : ny * s.H;
-    h.lastMove = s.t;
-    s.mouseT = s.t;
-    // The tutorial's demo hand may be mid-pinch when a real hand appears: end that pinch (as the
-    // cursor path does), otherwise it stays held and blocks every camera pinch.
-    if (h.ghostPinch) {
-      h.ghostPinch = false;
-      this.pinchEnd();
-    }
-    const size = Math.hypot(lm[0].x - lm[9].x, lm[0].y - lm[9].y) || 0.1;
-    s.handSize = size;
-    if (s.focus) {
-      return;
-    }
+      // Palm centre → mirrored position; height maps into the same six slots as the cursor.
+      const nx = Math.max(0, Math.min(1, (1 - d.cx - 0.12) / 0.76));
+      const ny = Math.max(0, Math.min(1, (d.cy - 0.1) / 0.7));
+      h.tx = nx * s.W;
+      h.ty = s.band ? s.band[0] + ny * (s.band[1] - s.band[0]) : ny * s.H;
+      h.lastMove = s.t;
+      if (s.focus) {
+        return;
+      }
 
-    // Pinch: thumb tip to index tip, relative to hand size, with hysteresis.
-    // v7: start below PINCH_ON, end above PINCH_OFF. Fast tapping rarely reopens that far, so a
-    // pinch also ends when the fingers reopen PINCH_DELTA from their closest point, and the next
-    // one starts once they close PINCH_DELTA from their widest point (tuned on real-hand data).
-    const pd = Math.hypot(lm[4].x - lm[8].x, lm[4].y - lm[8].y) / size;
-    let pinchEvent = '';
-    if (h.pinch && h.camPinch) {
-      this.pinchLo = Math.min(this.pinchLo, pd);
-      if (pd > PINCH_OFF || pd >= this.pinchLo + PINCH_DELTA) {
-        h.camPinch = false;
-        this.pinchEnd();
-        this.pinchHi = pd;
-        pinchEvent = 'off';
+      // Pinch: thumb tip to index tip, relative to hand size, with hysteresis.
+      // v7: start below PINCH_ON, end above PINCH_OFF. Fast tapping rarely reopens that far, so a
+      // pinch also ends when the fingers reopen PINCH_DELTA from their closest point, and the
+      // next one starts once they close PINCH_DELTA from their widest point (tuned on real-hand
+      // data). All of it is per hand: one hand's tracking noise can only re-trigger that hand.
+      const size = Math.hypot(lm[0].x - lm[9].x, lm[0].y - lm[9].y) || 0.1;
+      const pd = Math.hypot(lm[4].x - lm[8].x, lm[4].y - lm[8].y) / size;
+      let pinchEvent = '';
+      if (h.pinch && h.camPinch) {
+        h.pinchLo = Math.min(h.pinchLo, pd);
+        if (pd > PINCH_OFF || pd >= h.pinchLo + PINCH_DELTA) {
+          h.camPinch = false;
+          this.pinchEnd(h);
+          h.pinchHi = pd;
+          pinchEvent = 'off';
+        }
+      } else if (!h.pinch) {
+        h.pinchHi = Math.max(h.pinchHi, pd);
+        if (pd < PINCH_ON && pd <= h.pinchHi - PINCH_DELTA) {
+          h.camPinch = true;
+          this.pinchStart(h);
+          h.pinchLo = pd;
+          pinchEvent = 'on';
+        }
       }
-    } else if (!h.pinch) {
-      this.pinchHi = Math.max(this.pinchHi, pd);
-      if (pd < PINCH_ON && pd <= this.pinchHi - PINCH_DELTA) {
-        h.camPinch = true;
-        this.pinchStart();
-        this.pinchLo = pd;
-        pinchEvent = 'on';
+      if (import.meta.env.DEV) {
+        this.pinchLog.push({ t: now, hand: hi, pd, pinch: h.pinch, ev: pinchEvent });
+        if (this.pinchLog.length > 3000) {
+          this.pinchLog.splice(0, 1000);
+        }
       }
+    });
+  }
+
+  /**
+   * Which detection drives which performing hand: returns, per hand slot, a detection index or
+   * -1. A hand seen recently keeps following the detection nearest to it, preferring the same
+   * handedness label; a label flip alone costs less than switching slots, so one noisy frame
+   * cannot move a held note to the other hand. A new single hand takes slot 0 (one-hand use is
+   * unchanged).
+   */
+  private matchHands(dets: { cx: number; cy: number; side: string | null }[]): number[] {
+    const s = this.sim;
+    const cost = (h: Hand, d: (typeof dets)[number]) => {
+      if (s.t - h.camSeen > 0.6) {
+        return 1 + h.idx * 0.01; // free slot
+      }
+      const label = h.camKey && d.side ? (h.camKey === d.side ? 0 : 0.6) : 0.3;
+      return label + Math.hypot(h.camX - d.cx, h.camY - d.cy);
+    };
+    const [a, b] = s.hands;
+    if (dets.length === 0) {
+      return [-1, -1];
     }
-    if (import.meta.env.DEV) {
-      this.pinchLog.push({ t: now, pd, pinch: h.pinch, ev: pinchEvent });
-      if (this.pinchLog.length > 3000) {
-        this.pinchLog.splice(0, 1000);
-      }
+    if (dets.length === 1) {
+      return cost(a, dets[0]) <= cost(b, dets[0]) ? [0, -1] : [-1, 0];
     }
+    const straight = cost(a, dets[0]) + cost(b, dets[1]);
+    const crossed = cost(a, dets[1]) + cost(b, dets[0]);
+    return straight <= crossed ? [0, 1] : [1, 0];
   }
 }

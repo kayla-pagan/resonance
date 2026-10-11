@@ -1,11 +1,14 @@
 import type { CSSProperties, RefObject } from 'react';
-import type { AppState, Feel, StatePatch } from '../core/appState';
+import { tactileRole, type AppState, type Feel, type StatePatch } from '../core/appState';
 import type { ResonanceController, TactileRefs } from '../core/controller';
 import { INSTR } from '../core/engine';
 import { LEGEND_SHAPE, musicGeometry, scoreGeometry } from './scoreGeometry';
 import './Tactile.css';
 
 type Ctrl = RefObject<ResonanceController | null>;
+
+/** Amber = timing (the metronome); cream = Drums; cyan = Bass. */
+const AMBER = '#f2bd72';
 
 /** Feel modes. Internally `rhythm` is the left (Drums) motor, `expression` the right (Bass). */
 const FEELS: [Feel, string][] = [
@@ -35,38 +38,46 @@ export function TactileModule({
   tactile: TactileRefs;
 }) {
   const tr = st.transport;
-  const busy = tr === 'countin' || tr === 'recording';
   const hasLoop = st.layers.length > 0;
-  const role = busy
+  // Amber = timing (count-in, or a take with no committed Drums / Bass); otherwise the motors
+  // carry Drums (left) and Bass (right): the existing loop during a take, the composition after.
+  const tRole = tactileRole(st);
+  const metro = tRole === 'metro';
+  const role = metro
     ? ' · Keeping time'
-    : (tr === 'playing' || tr === 'paused' || tr === 'armed') && hasLoop
-      ? ' · Composition'
-      : '';
+    : tRole === 'groove'
+      ? ' · Feeling the loop'
+      : (tr === 'playing' || tr === 'paused' || tr === 'armed') && hasLoop
+        ? ' · Composition'
+        : '';
   const lanes = laneOps(st);
+  const amber = metro ? { color: '#f2bd72' } : {};
 
   return (
     <div ref={box} data-avoid="1" className="tact">
       <span ref={edgeL} aria-hidden="true" className="tact-edge tact-edge--pulse" />
       <span ref={edgeR} aria-hidden="true" className="tact-edge tact-edge--expr" />
       <span className="tact-title">
-        Tactile<span style={{ color: busy ? '#f2bd72' : '#7fe0ec' }}>{role}</span>
+        Tactile<span style={{ color: metro ? '#f2bd72' : '#7fe0ec' }}>{role}</span>
       </span>
       <div className="tact-band">
         <canvas
           ref={wrist}
           aria-label={
-            busy
+            metro
               ? 'Simulated wristband: both motors pulse the beat together'
-              : 'Simulated wristband: Drums motor on the left, Bass motor on the right'
+              : tRole === 'groove'
+                ? 'Simulated wristband: your recorded drums on the left, bass on the right'
+                : 'Simulated wristband: Drums motor on the left, Bass motor on the right'
           }
           className="tact-canvas"
         />
-        {/* While keeping time both motors carry the same beat; otherwise left = Drums, right = Bass. */}
-        <span className="tact-lane tact-lane--pulse" style={{ opacity: lanes.pulse }}>
-          {busy ? 'Beat' : 'Drums'}
+        {/* Keeping time: both motors carry the same beat. Otherwise left = Drums, right = Bass. */}
+        <span className="tact-lane tact-lane--pulse" style={{ opacity: lanes.pulse, ...amber }}>
+          {metro ? 'Beat' : 'Drums'}
         </span>
-        <span className="tact-lane tact-lane--expr" style={{ opacity: lanes.expr }}>
-          {busy ? 'Beat' : 'Bass'}
+        <span className="tact-lane tact-lane--expr" style={{ opacity: lanes.expr, ...amber }}>
+          {metro ? 'Beat' : 'Bass'}
         </span>
       </div>
       <div role="radiogroup" aria-label="Tactile mode" className="tact-feels">
@@ -210,8 +221,13 @@ export function TactileScore({
         {!music && (
           <>
             <div className="ts-lanes">
-              <span style={{ opacity: lanes.pulse }}>{g.keepingTime ? 'Beat' : 'Drums'}</span>
-              <span className="ts-lane-expr" style={{ opacity: lanes.expr }}>
+              <span style={{ opacity: lanes.pulse, ...(g.keepingTime ? { color: AMBER } : {}) }}>
+                {g.keepingTime ? 'Beat' : 'Drums'}
+              </span>
+              <span
+                className="ts-lane-expr"
+                style={{ opacity: lanes.expr, ...(g.keepingTime ? { color: AMBER } : {}) }}
+              >
                 {g.keepingTime ? 'Beat' : 'Bass'}
               </span>
             </div>
@@ -225,7 +241,7 @@ export function TactileScore({
                 <span
                   key={p.id}
                   data-ev={p.id}
-                  className="ts-pulse"
+                  className={'ts-pulse' + (p.metro ? ' ts-pulse--metro' : '')}
                   style={{
                     left: p.left,
                     width: p.size,
@@ -241,7 +257,7 @@ export function TactileScore({
                 <span
                   key={p.id + '-r'}
                   data-ev={p.id}
-                  className="ts-pulse ts-pulse--expr"
+                  className="ts-pulse ts-pulse--expr ts-pulse--metro"
                   style={{
                     left: p.left,
                     width: p.size,
@@ -298,8 +314,10 @@ export function TactileScore({
           {!music && (
             <span className="ts-note">
               {g.keepingTime
-                ? 'Both motors pulse the beat while you record'
-                : 'Keys and Lead are heard and seen, not felt'}
+                ? 'Both motors pulse the beat'
+                : g.groove
+                  ? 'You feel your recorded ' + g.grooveParts + ' while you play'
+                  : 'Keys and Lead are heard and seen, not felt'}
             </span>
           )}
         </div>
@@ -365,7 +383,7 @@ const BAND_NOTE: Record<AppState['bandHw'], string> = {
   searching: 'Choose Resonance Wristband in the browser dialog.',
   connecting: 'Connecting to Resonance Wristband.',
   connected:
-    'Drums and bass are playing on your wrist; both motors keep time while you record. Feel modes filter what is sent.',
+    'Drums and bass are playing on your wrist; both motors keep time during the count-in. Feel modes filter what is sent.',
   lost: 'The connection dropped. Both motors stopped.',
   unavailable:
     'Bluetooth wristband unavailable in this browser. The on-screen wristband, tactile score and everything else keep working.',

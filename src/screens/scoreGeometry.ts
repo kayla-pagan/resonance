@@ -1,4 +1,4 @@
-import type { AppState, ScoreView } from '../core/appState';
+import { tactileRole, type AppState, type ScoreView } from '../core/appState';
 import type { InstKey } from '../core/engine';
 
 const pct = (v: number) => (v * 100).toFixed(2) + '%';
@@ -22,21 +22,22 @@ export const LEGEND_SHAPE: Record<
 
 /**
  * Tactile score geometry: two lanes, one per motor of the two-motor prototype.
- * Count-in / recording: both lanes show the same metronome beats (both motors keep time) and the
- * existing layers are dimmed, since they are heard but not felt during a take.
- * Playback: Drums lane = kick / snare (hats are heard, not felt, so drawn faint); Bass lane = bass
- * notes, bars as long as held notes. No metronome is felt in playback, so none is drawn.
+ * Drums lane = kick / snare (hats are heard, not felt, so drawn faint); Bass lane = bass notes,
+ * bars as long as held notes. Recorded layers are never dimmed while another is recorded, so the
+ * performer can follow the composition they are overdubbing.
+ * While the metronome is felt (count-in, or a take with no committed Drums / Bass), both lanes
+ * also show the same amber beats. No metronome is felt in playback, so none is drawn then.
  * Keys and Lead have no motor and never appear here (they are in the Music view).
  */
 export function scoreGeometry(score: ScoreView, st: AppState) {
   const L = score.len;
   const pOK = st.feel === 'full' || st.feel === 'rhythm';
   const eOK = st.feel === 'full' || st.feel === 'expression';
-  const metroFelt = st.transport === 'countin' || st.transport === 'recording';
-  const dim = (m: { muted: boolean; rec: boolean }) =>
-    (m.muted ? 0.22 : m.rec ? 0.6 : 1) * (metroFelt ? 0.35 : 1);
+  const role = tactileRole(st);
+  const metroFelt = role === 'metro';
+  const dim = (m: { muted: boolean; rec: boolean }) => (m.muted ? 0.22 : m.rec ? 0.6 : 1);
 
-  /** The tactile metronome: drawn identically in both lanes while it is felt. */
+  /** The tactile metronome: drawn identically (amber) in both lanes while it is felt. */
   const metro = (ok: boolean) =>
     metroFelt
       ? score.marks
@@ -48,8 +49,9 @@ export function scoreGeometry(score: ScoreView, st: AppState) {
               left: pct(m.t / L),
               size: size + 'px',
               margin: -size / 2 + 'px',
-              bg: 'rgba(236,230,216,.6)',
+              bg: 'rgba(242,189,114,.75)',
               op: ok ? 1 : 0.18,
+              metro: true,
             };
           })
       : [];
@@ -65,6 +67,7 @@ export function scoreGeometry(score: ScoreView, st: AppState) {
         margin: -size / 2 + 'px',
         bg: m.drum === 'hat' ? 'rgba(236,230,216,.3)' : 'rgba(236,230,216,.72)',
         op: (pOK ? 1 : 0.18) * dim(m),
+        metro: false,
       };
     });
 
@@ -89,6 +92,15 @@ export function scoreGeometry(score: ScoreView, st: AppState) {
     exprBeats: metro(eOK),
     bass,
     keepingTime: metroFelt,
+    /** A take over committed Drums / Bass: the lanes show the groove being felt. */
+    groove: role === 'groove',
+    /** Which committed parts that groove is made of (for the note under the score). */
+    grooveParts: [
+      score.marks.some((m) => m.layer === 'drum' && m.felt && !m.rec && !m.muted) && 'drums',
+      score.marks.some((m) => m.inst === 'bass' && m.felt && !m.rec && !m.muted) && 'bass',
+    ]
+      .filter(Boolean)
+      .join(' and '),
   };
 }
 

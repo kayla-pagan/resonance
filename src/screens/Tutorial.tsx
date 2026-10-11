@@ -10,7 +10,7 @@ const TUT = [
 ];
 /** The tactile step reads the same for cursor and camera. */
 const TACTILE_HINT =
-  'While you count in and record, both motors pulse the beat together to keep you in time. On playback, one motor carries the Drums and the other the Bass.';
+  'During the count-in, both motors pulse the beat together. While you record, you feel the drums and bass already in your loop, or the beat if there are none yet. On playback, one motor carries the Drums and the other the Bass.';
 const TUT_HINT = [
   'Move the cursor up and down the field. Six heights give six notes of the scale, so every note fits. On drums, height picks kick, snare or hat.',
   'Click and hold anywhere in the field. A quick click plays a short note; holding sustains it.',
@@ -19,7 +19,7 @@ const TUT_HINT = [
 ];
 const TUT_HINT_CAM = [
   'Raise and lower your open hand in front of the camera. Six heights give six notes of the scale. On drums, height picks kick, snare or hat.',
-  'Touch your thumb to your index finger. A quick pinch plays a short note; holding it sustains the note.',
+  'Touch your thumb to your index finger. A quick pinch plays a short note; holding it sustains the note. Use either hand, or both, to play the selected instrument.',
   'Move your hand faster and wider to play stronger. Hold up both hands and spread them apart to open up the sound.',
   TACTILE_HINT,
 ];
