@@ -227,3 +227,12 @@ Bluetooth, the on-screen wristband and the tactile score still show everything.
 
 In development builds the controller is exposed as `window.__resonance` for debugging. It also
 records dispatch and trigger logs used for timing verification.
+
+## Contributors
+
+Resonance was built by:
+
+- **Kayla Pagan** ([@kayla-pagan](https://github.com/kayla-pagan)): project lead and software developer. Built the web app: the audio and transport engine, hand tracking, recording and visual notation.
+- **Luciana Lazo** ([@empanalisa](https://github.com/empanalisa)): built the haptic wristband hardware. Designed and assembled the ESP32 wristband with two vibration motors, driven through transistors, that lets performers feel the drums and bass.
+
+Contributions are welcome. Open an issue or pull request on a branch.
